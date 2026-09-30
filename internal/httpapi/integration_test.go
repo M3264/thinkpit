@@ -531,3 +531,77 @@ func TestWorkerAutomaticallyRetries429WithoutDuplicateCompletedReply(t *testing.
 		t.Fatal("duplicate or missing retry result")
 	}
 }
+
+func TestCatalogPersistsAndKeepsSavedModelsOnRefreshFailure(t *testing.T) {
+	s := database(t)
+	var calls atomic.Int32
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		if n > 1 {
+			http.Error(w, "unavailable", 503)
+			return
+		}
+		fmt.Fprint(w, `{"data":[{"id":"saved-model","name":"Saved model"}]}`)
+	}))
+	defer fake.Close()
+	config := provider.Config{ID: "cached", Kind: "openai_compat", BaseURL: fake.URL, APIKey: "private-test-credential"}
+	server := &Server{Store: s, Password: "test-password"}
+	fetch := func(refresh bool) map[string]any {
+		path := "/api/providers/cached/models"
+		if refresh {
+			path += "?refresh=true"
+		}
+		w := httptest.NewRecorder()
+		server.catalog(w, httptest.NewRequest("GET", path, nil), config)
+		if w.Code != 200 {
+			t.Fatalf("catalog status %d", w.Code)
+		}
+		if strings.Contains(w.Body.String(), config.APIKey) {
+			t.Fatal("credential leaked")
+		}
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	first := fetch(false)
+	server = &Server{Store: s, Password: "test-password"} // new server, same persisted cache
+	second := fetch(false)
+	if calls.Load() != 1 || first["fetched_at"] != second["fetched_at"] {
+		t.Fatal("saved catalog was fetched again")
+	}
+	stale := fetch(true)
+	if calls.Load() != 2 || stale["stale"] != true || len(stale["models"].([]any)) != 1 {
+		t.Fatal("refresh discarded saved models")
+	}
+	config.APIKey = "changed-credential"
+	w := httptest.NewRecorder()
+	server.catalog(w, httptest.NewRequest("GET", "/api/providers/cached/models", nil), config)
+	if w.Code != 502 {
+		t.Fatal("credential change reused old catalog")
+	}
+}
+func TestWorkerContinuesPastUnavailableModel(t *testing.T) {
+	s := database(t)
+	var bad, good atomic.Int32
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/bad/") {
+			bad.Add(1)
+			http.Error(w, "unavailable", 401)
+			return
+		}
+		good.Add(1)
+		reply(w, "openai_compat", "A useful contribution", conversation.Control{ReadyToPause: true})
+	}))
+	defer fake.Close()
+	saveFake(t, s, fake.URL+"/bad", "one", "openai_compat")
+	saveFake(t, s, fake.URL+"/good", "two", "openai_compat")
+	c := makeConversation(t, s)
+	command(t, s, c.ID, "start", "")
+	startWorker(t, s)
+	done := await(t, s, c.ID, func(c *conversation.Conversation) bool { return c.State == conversation.Ready })
+	if bad.Load() != 1 || good.Load() != 1 || done.Unavailable["a"] == "" || done.Attempts[0].Status != "failed" || done.Attempts[1].Status != "complete" {
+		t.Fatal("failed model did not sit out cleanly")
+	}
+}

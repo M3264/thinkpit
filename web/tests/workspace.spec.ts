@@ -230,7 +230,7 @@ test("login and provider onboarding", async ({ page }) => {
   await page.getByLabel("Password", { exact: true }).fill("test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Put a few minds to work." }),
+    page.getByRole("heading", { name: "A better answer starts with another perspective." }),
   ).toBeVisible();
   await page.getByRole("link", { name: /Set up a provider/ }).click();
   await page.getByRole("button", { name: "Try Pollinations — no key" }).click();
@@ -338,7 +338,7 @@ test("essential question, export, summary and deletion confirmation", async ({
     .getByRole("button", { name: "Delete conversation", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Put a few minds to work." }),
+    page.getByRole("heading", { name: "A better answer starts with another perspective." }),
   ).toBeVisible();
 });
 
@@ -503,4 +503,32 @@ test('retry a failed reply without a new human message',async({page})=>{
 
 test('show queued automatic retry and allow pausing it',async({page})=>{
  await mock(page);await page.route('**/api/conversations/test-conversation',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({...initial,state:'running',retry_at:new Date(Date.now()+60000).toISOString(),automatic_retry_count:1})}));await page.goto('/?conversation=test-conversation');await expect(page.getByText(/Automatic retry 1\/2 is scheduled/)).toBeVisible();await expect(page.getByText('Waiting to retry',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Pause',exact:true}).click();await expect(page.getByText(/Automatic retry 1\/2 is scheduled/)).not.toBeVisible();await expect(page.getByRole('button',{name:'Resume',exact:true})).toBeVisible();
+});
+
+
+test('saved models remain selectable across picker visits and refresh failure',async({page})=>{
+ await mock(page);let calls=0;
+ await page.route('**/api/providers/pollinations/models*',r=>{calls++;return calls===1?r.fulfill({json:{models:[{id:'cedar',name:'Cedar Reasoner',capabilities:[]}],truncated:false}}):r.fulfill({status:502,body:'Catalog unavailable'})});
+ await page.goto('/');await page.getByRole('button',{name:'Add your first participant'}).click();
+ const input=page.getByRole('combobox',{name:'Model',exact:true});await input.click();await expect(page.getByRole('option',{name:'Cedar Reasoner cedar'})).toBeVisible();await capture(page,'selector');await page.getByRole('option',{name:'Cedar Reasoner cedar'}).click();await expect(input).toHaveValue('cedar');
+ await page.getByRole('button',{name:'Browse models',exact:true}).click();await expect(page.getByRole('heading',{name:'Cedar Reasoner',exact:true})).toBeVisible();await page.getByRole('button',{name:'Done choosing models'}).click();
+ await page.getByRole('button',{name:'Browse models',exact:true}).click();expect(calls).toBe(1);
+ await page.getByRole('button',{name:'Refresh models',exact:true}).click();await expect(page.getByText('Couldn’t refresh this provider’s models.')).toBeVisible();await expect(page.getByRole('button',{name:'Add Cedar Reasoner',exact:true})).toBeVisible();expect(calls).toBe(2);
+});
+test('unavailable model explains failure and can be restored',async({page},info)=>{
+ await mock(page);await page.route('**/api/conversations/test-conversation',r=>r.fulfill({json:{...initial,state:'running',next:1,unavailable_participants:{a:'provider returned HTTP 401'}}}));
+ await page.goto('/?conversation=test-conversation');
+ if(info.project.name==='mobile')await page.getByRole('button',{name:'Participants (2)'}).click();
+ const roster=info.project.name==='mobile'?page.getByRole('dialog',{name:'Participants',exact:true}):page.getByRole('complementary',{name:'Conversation participants'});
+ await expect(roster.getByText('Sitting out',{exact:true})).toBeVisible();await expect(roster.getByText('provider returned HTTP 401',{exact:true})).toBeVisible();
+ await capture(page,'recovery');
+ const request=page.waitForRequest(r=>r.url().endsWith('/controls')&&r.postDataJSON().action==='restore_model'&&r.postDataJSON().text==='a');await roster.getByRole('button',{name:'Bring back',exact:true}).click();await request;
+});
+
+test('search cancellation preserves selection and custom IDs require confirmation',async({page})=>{
+ await mock(page);await page.goto('/');await page.getByRole('button',{name:'Add your first participant'}).click();
+ const input=page.getByRole('combobox',{name:'Model',exact:true});await input.click();await page.getByRole('option',{name:'Cedar Reasoner cedar Free'}).click();await expect(input).toHaveValue('cedar');
+ await input.fill('orch');await input.press('Escape');await expect(input).toHaveValue('cedar');
+ await input.fill('orch');await page.getByRole('heading',{name:'At the table'}).click();await expect(input).toHaveValue('cedar');
+ await input.fill('private/custom-model');await page.getByRole('button',{name:'Use this model ID: private/custom-model',exact:true}).click();await expect(input).toHaveValue('private/custom-model');
 });

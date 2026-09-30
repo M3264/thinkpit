@@ -29,6 +29,8 @@ export type Message = {
   created_at: string;
 };
 export type Conversation = {
+  next?: number;
+  unavailable_participants?: Record<string,string>;
   retry_at?: string;
   automatic_retry_count?: number;
   context?: Evidence[];
@@ -68,7 +70,7 @@ export type Model = {
   free?: boolean;
   capabilities: string[];
 };
-export type Catalog = { models: Model[]; truncated: boolean };
+export type Catalog = { models: Model[]; truncated: boolean; fetched_at?: string; stale?: boolean; warning?: string };
 export type Evidence = {
   id: string;
   kind: "file" | "web";

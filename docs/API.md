@@ -88,3 +88,29 @@ HTTP 400 means malformed input, 401 means authentication is required, 403 means 
 Uploads and fetched pages return `evidence` and a signed `token`, valid for 24 hours. Send those strings in `context_tokens` when creating a conversation or submitting a `message` control. Each item is limited to a 16 KB excerpt; conversations hold at most 20 items and 96 KB of context. Evidence persists with the conversation, appears in snapshots and exports, and is deleted with it. Context is marked as untrusted reference material in model prompts. Search only runs when requested by the human; models do not autonomously browse or run tools.
 
 Transient connection errors, HTTP 408/429, and 5xx responses before any streamed text get up to two automatic retries (three attempts total), with 2s/4s backoff or a longer provider `Retry-After`. Each retry creates a separate recorded attempt and reserves tokens; existing global turn/token caps still apply. Partial replies and permanent failures (such as 400/401) require manual retry. Retry timestamps and counts persist in snapshots; workers skip future retry jobs, including after restart. Pause, stop, or human interruption cancel a queued retry. `retry` after exhaustion starts a fresh bounded retry sequence while preserving global caps.
+
+### Continuing after a model fails
+
+Transient empty-response failures still receive two automatic retries. Once retries
+are exhausted, or a provider returns a permanent request failure, that participant
+sits out and the next available participant continues. The conversation retains
+its failed attempts and incomplete replies. No model is silently substituted.
+If all participants become unavailable, execution stops with `all_models_failed`.
+Protocol validation failures still require attention.
+
+`skip_model` skips the current participant, cancelling an active call or pending
+retry. `restore_model` with `text` set to a participant ID brings a skipped model
+back. Restoring a model after all have failed leaves execution paused until Resume.
+`retry` retries the current failed participant. Every subsequent attempt continues
+to respect the original turn and token caps. Availability is saved in
+`unavailable_participants`, a map from participant IDs to the reason they sit out.
+
+### Saved model catalogs
+
+Provider model catalogs are saved in PostgreSQL for 24 hours. Model selection uses
+a shared browser memory cache, so switching views does not repeatedly fetch models.
+`GET /api/providers/{id}/models?refresh=true` explicitly refreshes a catalog.
+A failed refresh returns the last saved catalog with `stale: true` and a warning;
+a provider without any saved catalog receives HTTP 502. Responses include
+`fetched_at`. Changing endpoint, provider configuration, or credentials selects a
+new server cache entry. Catalogs contain model metadata only, never credentials.

@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -60,15 +59,7 @@ func (s *Server) Handler() http.Handler {
 	})
 
 	mux.HandleFunc("GET /api/catalog/openrouter", func(w http.ResponseWriter, r *http.Request) {
-		adapter, _ := provider.New(provider.Config{ID: "openrouter", Kind: "openai_compat", BaseURL: "https://openrouter.ai/api/v1"})
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-		defer cancel()
-		catalog, err := adapter.Models(ctx)
-		if err != nil {
-			http.Error(w, err.Error(), 502)
-			return
-		}
-		write(w, 200, catalog)
+		s.catalog(w, r, provider.Config{ID: "openrouter", Kind: "openai_compat", BaseURL: "https://openrouter.ai/api/v1"})
 	})
 	mux.HandleFunc("PUT /api/providers/{id}", s.saveProvider)
 	mux.HandleFunc("GET /api/providers/{id}/models", func(w http.ResponseWriter, r *http.Request) {
@@ -76,18 +67,7 @@ func (s *Server) Handler() http.Handler {
 		if failure(w, err) {
 			return
 		}
-		adapter, err := provider.New(config)
-		if failure(w, err) {
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-		defer cancel()
-		catalog, err := adapter.Models(ctx)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		write(w, 200, catalog)
+		s.catalog(w, r, config)
 	})
 	mux.HandleFunc("GET /api/conversations", func(w http.ResponseWriter, r *http.Request) {
 		cs, err := s.Store.List(r.Context())

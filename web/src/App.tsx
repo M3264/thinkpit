@@ -25,6 +25,7 @@ import {
   ArrowLeft,
   ArrowUpRight,
   Shapes,
+  Copy,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -40,6 +41,8 @@ import type {
 import { Textarea } from "./components/Textarea";
 import { ContextInput } from "./components/ContextInput";
 import { ModelLibrary } from "./components/ModelLibrary";
+import { loadCatalog, clearCatalogs } from "./catalog";
+import { ModelSelect, ProviderModels } from "./components/ModelSelect";
 import { Dialog } from "./components/Dialog";
 const stateName: Record<Conversation["state"], string> = {
   ready: "Ready",
@@ -124,6 +127,7 @@ export default function App() {
       api<Conversation[]>("/conversations"),
     ]);
     setProviders(p);
+    p.forEach(provider => void loadCatalog(provider));
     setConversations(c);
   }, []);
   useEffect(() => {
@@ -368,6 +372,7 @@ export default function App() {
               setCurrent(null);
               setConversations([]);
               setProviders([]);
+              clearCatalogs();
             })
           }
         >
@@ -556,6 +561,7 @@ export default function App() {
                     ),
                     human = index === -1,
                     p = current.participants[index];
+                  if (m.status === "incomplete" && !m.content) return <details className="failed-attempt" key={m.id}><summary>{human ? "You" : p.name} · No reply received</summary><p>{current.attempts.find(a=>a.message_id===m.id)?.error || "The request was interrupted."}</p></details>;
                   return (
                     <article
                       key={m.id}
@@ -565,6 +571,8 @@ export default function App() {
                       <header>
                         {!human && <Seal name={p.name} index={index} />}
                         <strong>{human ? "You" : p.name}</strong>
+                        {!human && <span className="message-model">{p.model}</span>}
+                        {m.content && <CopyReply text={m.content}/>}
                         {m.status === "incomplete" && (
                           <span className="incomplete">Unfinished</span>
                         )}
@@ -600,7 +608,7 @@ export default function App() {
                 })}
                 {current.state === "failed" && (
                   <div className="turn-error" role="alert">
-                    <strong>A reply could not finish.</strong>
+                    <strong>{current.reason === "all_models_failed" ? "All models are unavailable." : "A reply could not finish."}</strong>
                     <p>
                       {
                         [...current.attempts].reverse().find((a) => a.error)
@@ -608,13 +616,13 @@ export default function App() {
                       }
                       . Check the provider settings or retry this reply.
                     </p>
-                    <button className="button secondary" disabled={busy} onClick={() => control("retry")}>Retry reply</button>
+                    <div className="recovery-actions"><button className="button primary" disabled={busy} onClick={() => control("retry")}>Retry reply</button>{current.participants.length > 1 && current.reason !== "all_models_failed" && <button className="button secondary" disabled={busy} onClick={()=>control("skip_model")}>Skip model & continue</button>}</div>
                     <Link href="/?view=providers">
                       Open providers <ArrowUp aria-hidden="true" size={14} />
                     </Link>
                   </div>
                 )}
-                {current.retry_at && current.state === "running" && <div className="turn-error" role="status">Provider temporarily unavailable. Automatic retry {current.automatic_retry_count}/2 is scheduled for {new Date(current.retry_at).toLocaleTimeString()}. You can pause or stop while waiting.</div>}
+                {current.retry_at && current.state === "running" && <div className="turn-error" role="status">Provider temporarily unavailable. Automatic retry {current.automatic_retry_count}/2 is scheduled for {new Date(current.retry_at).toLocaleTimeString()}. <button className="text-button" disabled={busy} onClick={()=>control("skip_model")}>Skip this model now</button></div>}
                 {current.reason === "turn_limit" ||
                 current.reason === "token_limit" ? (
                   <p className="limit-note">
@@ -711,41 +719,14 @@ export default function App() {
               </div>
               <aside className="conversation-roster" aria-label="Conversation participants">
                 <h2>Participants <span>({current.participants.length})</span></h2>
-                <div className="participant-strip">
-                  {current.participants.map((p, i) => (
-                    <span key={p.id}>
-                      <Seal name={p.name} index={i} />
-                      <span>
-                        {p.name}
-                        <small>
-                          {p.model} ·{" "}
-                          {providers.find((x) => x.id === p.provider_id)
-                            ?.name || p.provider_id}
-                        </small>
-                      </span>
-                    </span>
-                  ))}
-                </div>
+                <Roster current={current} providers={providers} busy={busy} control={control} />
+                <p className="roster-note">Models take turns. Unavailable models sit out until you bring them back.</p>
               </aside>
             </div>
           )}
         </main>
       </div>
-      {participantsOpen && current && (<Dialog title="Participants" close={() => setParticipantsOpen(false)}>                <div className="participant-strip">
-                  {current.participants.map((p, i) => (
-                    <span key={p.id}>
-                      <Seal name={p.name} index={i} />
-                      <span>
-                        {p.name}
-                        <small>
-                          {p.model} ·{" "}
-                          {providers.find((x) => x.id === p.provider_id)
-                            ?.name || p.provider_id}
-                        </small>
-                      </span>
-                    </span>
-                  ))}
-                </div></Dialog>)}
+      {participantsOpen && current && <Dialog title="Participants" close={() => setParticipantsOpen(false)}><Roster current={current} providers={providers} busy={busy} control={control}/></Dialog>}
       {sourcesOpen && current && (
         <Dialog
           title="Conversation sources"
@@ -1080,9 +1061,9 @@ function NewConversation({
   return (
     <div className="setup-workbench">
       <div className="new-conversation">
-        <h1>Put a few minds to work.</h1>
+        <h1>A better answer starts<br />with another perspective.</h1>
         <p className="intro">
-          Pick your models. Bring a question. See where they take it.
+          Choose who joins the discussion. You can step in at any time.
         </p>
         <form
           onSubmit={async (e) => {
@@ -1264,21 +1245,7 @@ function NewConversation({
                         ))}
                       </select>
                     </label>
-                    <label>
-                      Model
-                      <input
-                        required
-                        name={`model-${p.id}`}
-                        autoComplete="off"
-                        spellCheck={false}
-                        placeholder="Model ID…"
-                        value={p.model}
-                        onChange={(e) =>
-                          change(index, { model: e.target.value })
-                        }
-                        maxLength={256}
-                      />
-                    </label>
+                    <ModelSelect provider={providers.find(v=>v.id===p.provider_id)} name={`model-${p.id}`} value={p.model} onChange={model=>change(index,{model})} />
                   </div>
                   <details>
                     <summary>
@@ -1531,6 +1498,7 @@ function Providers({
             <div>
               <strong>{p.name || p.id}</strong>
               <small>{new URL(p.base_url).host}</small>
+              <ProviderModels provider={p}/>
             </div>
             <span className="key-status">
               {p.has_key ? (
@@ -1595,6 +1563,7 @@ function Providers({
               };
             if (key || !editing || data.get("remove_key")) body.api_key = key;
             try {
+              clearCatalogs();
               await api(`/providers/${editing?.id || id()}`, {
                 method: "PUT",
                 body: JSON.stringify(body),
@@ -1716,4 +1685,21 @@ function Providers({
       </p>
     </div>
   );
+}
+
+function Roster({current,providers,busy,control}:{current:Conversation;providers:Provider[];busy:boolean;control:(action:string,extra?:Record<string,unknown>)=>Promise<boolean>}) {
+ return <div className="participant-strip">{current.participants.map((p,i)=>{
+ const unavailable=current.unavailable_participants?.[p.id];
+ const next=i===(current.next??0);
+ const active=next&&current.state==="running"&&!unavailable;
+ return <div className={`roster-person ${unavailable?"unavailable":active?"active":""}`} key={p.id}>
+ <Seal name={p.name} index={i}/><div className="roster-person-detail"><strong>{p.name}</strong><small>{p.model}</small><small>{providers.find(v=>v.id===p.provider_id)?.name||p.provider_id}</small><span className="participant-state">{unavailable?"Sitting out":active?(current.retry_at?"Retrying shortly":"Responding…"):next?"Up next":"Ready"}</span>
+ {unavailable?<><p className="participant-error">{unavailable}</p><button className="text-button" disabled={busy} onClick={()=>control("restore_model",{text:p.id})}>Bring back</button></>:active?<button className="text-button" disabled={busy} onClick={()=>control("skip_model")}>Skip model</button>:null}
+ </div></div>
+ })}</div>
+}
+
+function CopyReply({text}:{text:string}) {
+ const [state,setState]=useState("");
+ return <button className="copy-reply" aria-label={state||"Copy reply"} title={state||"Copy reply"} onClick={async()=>{try{await navigator.clipboard.writeText(text);setState("Copied")}catch{setState("Copy failed; select the text instead")}}}>{state==="Copied"?<Check size={14} aria-hidden="true"/>:<Copy size={14} aria-hidden="true"/>}<span className="sr-only" role="status">{state}</span></button>
 }

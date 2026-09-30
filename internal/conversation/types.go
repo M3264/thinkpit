@@ -65,29 +65,30 @@ type Attempt struct {
 	Error          string `json:"error,omitempty"`
 }
 type Conversation struct {
-	RetryAt            *time.Time      `json:"retry_at,omitempty"`
-	RetryCount         int             `json:"automatic_retry_count,omitempty"`
-	Context            []Evidence      `json:"context,omitempty"`
-	LastEventID        int64           `json:"last_event_id,omitempty"`
-	ID                 string          `json:"id"`
-	Topic              string          `json:"topic"`
-	State              State           `json:"state"`
-	Reason             string          `json:"reason,omitempty"`
-	Participants       []Participant   `json:"participants"`
-	AskQuestions       bool            `json:"ask_questions"`
-	Limits             Limits          `json:"limits"`
-	Messages           []Message       `json:"messages"`
-	Attempts           []Attempt       `json:"attempts"`
-	Pending            *Question       `json:"pending_question,omitempty"`
-	Next               int             `json:"next"`
-	RoundSeen          map[string]bool `json:"round_seen"`
-	RoundReady         map[string]bool `json:"round_ready"`
-	ChargedTokens      int             `json:"charged_tokens"`
-	ActiveID           string          `json:"active_attempt_id,omitempty"`
-	SummaryRequested   bool            `json:"summary_requested"`
-	SummaryReturnState State           `json:"summary_return_state,omitempty"`
-	CreatedAt          time.Time       `json:"created_at"`
-	UpdatedAt          time.Time       `json:"updated_at"`
+	Unavailable        map[string]string `json:"unavailable_participants,omitempty"`
+	RetryAt            *time.Time        `json:"retry_at,omitempty"`
+	RetryCount         int               `json:"automatic_retry_count,omitempty"`
+	Context            []Evidence        `json:"context,omitempty"`
+	LastEventID        int64             `json:"last_event_id,omitempty"`
+	ID                 string            `json:"id"`
+	Topic              string            `json:"topic"`
+	State              State             `json:"state"`
+	Reason             string            `json:"reason,omitempty"`
+	Participants       []Participant     `json:"participants"`
+	AskQuestions       bool              `json:"ask_questions"`
+	Limits             Limits            `json:"limits"`
+	Messages           []Message         `json:"messages"`
+	Attempts           []Attempt         `json:"attempts"`
+	Pending            *Question         `json:"pending_question,omitempty"`
+	Next               int               `json:"next"`
+	RoundSeen          map[string]bool   `json:"round_seen"`
+	RoundReady         map[string]bool   `json:"round_ready"`
+	ChargedTokens      int               `json:"charged_tokens"`
+	ActiveID           string            `json:"active_attempt_id,omitempty"`
+	SummaryRequested   bool              `json:"summary_requested"`
+	SummaryReturnState State             `json:"summary_return_state,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 }
 type Event struct {
 	ID             int64  `json:"id"`

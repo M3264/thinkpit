@@ -10,8 +10,8 @@ import {
   Eye,
   Wrench,
 } from "lucide-react";
-import { api } from "../api";
-import type { Provider, Model, Catalog } from "../types";
+import { useCatalog } from "../catalog";
+import type { Provider, Model } from "../types";
 export function ModelLibrary({
   providers,
   onChoose,
@@ -38,38 +38,16 @@ export function ModelLibrary({
   const [providerID, setProviderID] = useState(
       providers[0]?.id || "openrouter",
     ),
-    [catalog, setCatalog] = useState<Catalog>({ models: [], truncated: false }),
     [query, setQuery] = useState(""),
     [filter, setFilter] = useState("all"),
-    [loading, setLoading] = useState(false),
-    [error, setError] = useState(""),
-    [revision, setRevision] = useState(0),
+    [choiceError, setChoiceError] = useState(""),
     [visible, setVisible] = useState(40),
     [chosen, setChosen] = useState("");
   const provider =
     catalogProviders.find((p) => p.id === providerID) || catalogProviders[0];
-  useEffect(() => {
-    if (!provider) return;
-    const controller = new AbortController();
-    setLoading(true);
-    setError("");
-    setCatalog({ models: [], truncated: false });
-    api<Catalog>(
-      provider.id === "openrouter" &&
-        !providers.some((p) => p.id === "openrouter")
-        ? "/catalog/openrouter"
-        : `/providers/${encodeURIComponent(provider.id)}/models`,
-      { signal: controller.signal },
-    )
-      .then(setCatalog)
-      .catch((e) => {
-        if (!controller.signal.aborted) setError(e.message);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
-  }, [provider?.id, revision]);
+  const {catalog: saved,loading,error: loadError,refresh} = useCatalog(provider, provider?.id === "openrouter" && !providers.some(p=>p.id==="openrouter"));
+  const catalog = saved || {models:[],truncated:false};
+  const error = choiceError || loadError;
   useEffect(() => setVisible(40), [query, filter, providerID]);
   const matches = catalog.models.filter(
     (m) =>
@@ -98,7 +76,7 @@ export function ModelLibrary({
           type="button"
           className="icon-button"
           aria-label="Refresh models"
-          onClick={() => setRevision((r) => r + 1)}
+          onClick={() => refresh()}
           disabled={loading || !provider}
         >
           <RefreshCw
@@ -166,21 +144,23 @@ export function ModelLibrary({
           </div>
           <p className="catalog-count" role="status">
             {loading
-              ? "Fetching provider catalog…"
+              ? catalog.models.length ? "Refreshing saved models…" : "Fetching provider catalog…"
               : `${new Intl.NumberFormat().format(matches.length)} ${matches.length === 1 ? "model" : "models"}${catalog.truncated ? " · limited catalog" : ""}`}
           </p>
-          {error ? (
+          {saved?.fetched_at && <p className="catalog-saved">Saved {new Date(saved.fetched_at).toLocaleString()} · available across conversations</p>}
+          {error && (
             <div className="catalog-error" role="alert">
-              <strong>Couldn’t load this provider’s models.</strong>
+              <strong>Couldn’t refresh this provider’s models.</strong>
               <p>
-                {error}. Check your provider settings, refresh, or enter a model
+                {error}. Saved models remain selectable. Check provider settings or enter a model
                 ID in the participant form.
               </p>
               <a href="/?view=providers">
                 Provider settings <ArrowUpRight aria-hidden="true" size={14} />
               </a>
             </div>
-          ) : !loading && matches.length === 0 ? (
+          )}
+          {!loading && matches.length === 0 ? (
             <p className="library-empty">
               {catalog.models.length
                 ? "No models match. Try another search or filter."
@@ -209,7 +189,7 @@ export function ModelLibrary({
                           await onChoose(provider, m);
                           setChosen(m.name);
                         } catch (e) {
-                          setError((e as Error).message);
+                          setChoiceError((e as Error).message);
                         } finally {
                           setAdding(false);
                         }

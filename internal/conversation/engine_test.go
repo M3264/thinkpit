@@ -183,11 +183,11 @@ func TestFailureRecoveryAndSummary(t *testing.T) {
 		t.Fatal("recovery did not permit successor")
 	}
 	c.Finish(aid, Result{}, errors.New("provider unavailable"))
-	if c.State != Failed || c.Attempts[1].Status != "failed" {
+	if c.State != Running || c.Attempts[1].Status != "failed" || c.Unavailable["a"] == "" {
 		t.Fatal("failure hidden")
 	}
-	if _, _, ok = c.Begin(); ok {
-		t.Fatal("automatic substitution or retry")
+	if req, _, ok := c.Begin(); !ok || req.Participant.ID != "b" {
+		t.Fatal("did not advance past unavailable model")
 	}
 	c = fixture(t, true)
 	if err := c.Command("pause", "", nil); err != nil {
@@ -251,6 +251,7 @@ func (e temporaryFailure) Retryable() bool           { return true }
 func (e temporaryFailure) RetryAfter() time.Duration { return e.delay }
 func TestAutomaticRetryIsBoundedAndManualRetryKeepsIdentity(t *testing.T) {
 	c := fixture(t, false)
+	c.Participants = c.Participants[:1]
 	var original Request
 	for i := 0; i < 3; i++ {
 		req, id, ok := c.Begin()
@@ -328,13 +329,86 @@ func TestRetryRespectsControlsLimitsAndPartialOutput(t *testing.T) {
 	_, id, _ = c.Begin()
 	c.Delta(id, "Already streamed")
 	c.Finish(id, Result{}, temporaryFailure{})
-	if c.State != Failed || c.RetryAt != nil {
+	if c.State != Running || c.RetryAt != nil || c.Unavailable["a"] == "" {
 		t.Fatal("partial output automatically retried")
 	}
 	c = fixture(t, false)
 	_, id, _ = c.Begin()
 	c.Finish(id, Result{}, errors.New("permanent failure"))
-	if c.State != Failed || c.RetryAt != nil {
+	if c.State != Running || c.RetryAt != nil || c.Unavailable["a"] == "" {
 		t.Fatal("permanent error retried")
+	}
+}
+
+func TestSkipUnavailableModelsAndRestore(t *testing.T) {
+	c := fixture(t, false)
+	_, first, _ := c.Begin()
+	c.Finish(first, Result{}, errors.New("invalid credentials"))
+	req, second, ok := c.Begin()
+	if !ok || req.Participant.ID != "b" {
+		t.Fatal("failed model blocked conversation")
+	}
+	if err := c.Command("skip_model", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if c.Finish(second, Result{Text: "late"}, nil) {
+		t.Fatal("late skipped response accepted")
+	}
+	req, third, ok := c.Begin()
+	if !ok || req.Participant.ID != "c" {
+		t.Fatal("manual skip did not advance")
+	}
+	c.Finish(third, Result{}, errors.New("unavailable"))
+	if c.State != Failed || c.Reason != "all_models_failed" {
+		t.Fatal("all failed did not stop")
+	}
+	if _, _, ok := c.Begin(); ok {
+		t.Fatal("all failed kept calling")
+	}
+	if err := c.Command("restore_model", "b", nil); err != nil {
+		t.Fatal(err)
+	}
+	if c.State != Paused {
+		t.Fatal("restore should require resume after exhaustion")
+	}
+	c.Command("resume", "", nil)
+	req, aid, ok := c.Begin()
+	if !ok || req.Participant.ID != "b" {
+		t.Fatal("restored model not selected")
+	}
+	c.Finish(aid, Result{Text: "done", Control: Control{ReadyToPause: true}}, nil)
+	if c.State != Ready {
+		t.Fatal("unavailable models prevented idle")
+	}
+}
+func TestRetryExhaustionSkipsAndStillRespectsCap(t *testing.T) {
+	c := fixture(t, false)
+	for i := 0; i < 3; i++ {
+		_, aid, ok := c.Begin()
+		if !ok {
+			t.Fatal("missing attempt")
+		}
+		c.Finish(aid, Result{}, temporaryFailure{})
+		c.RetryAt = nil
+	}
+	if c.State != Running || c.Next != 1 || c.Unavailable["a"] == "" {
+		t.Fatal("exhausted retry did not skip")
+	}
+	c.Limits.MaxTurns = 3
+	if _, _, ok := c.Begin(); ok || c.Reason != "turn_limit" {
+		t.Fatal("skip bypassed budget")
+	}
+}
+
+func TestHumanMessageDoesNotReviveUnavailableModels(t *testing.T) {
+	c := fixture(t, false)
+	for range c.Participants {
+		_, aid, _ := c.Begin()
+		c.Finish(aid, Result{}, errors.New("unavailable"))
+	}
+	c.Command("message", "Here is more context", nil)
+	c.Command("resume", "", nil)
+	if _, _, ok := c.Begin(); ok || c.Reason != "all_models_failed" {
+		t.Fatal("human message silently restored unavailable models")
 	}
 }
