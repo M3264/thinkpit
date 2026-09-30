@@ -67,7 +67,11 @@ func run() error {
 	if addr == "" {
 		addr = "127.0.0.1:8080"
 	}
-	api := &httpapi.Server{Store: s, Username: username, Password: password}
+	webDir := os.Getenv("THINKPIT_WEB_DIR")
+	if webDir == "" {
+		webDir = "web/dist"
+	}
+	api := &httpapi.Server{Store: s, Username: username, Password: password, StaticDir: webDir, PublicOrigin: os.Getenv("THINKPIT_PUBLIC_ORIGIN")}
 	server := &http.Server{Addr: addr, Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	workerResult := make(chan error, 1)
 	go func() { workerResult <- httpapi.Work(ctx, s) }()

@@ -7,6 +7,7 @@ services:
       - "127.0.0.1:${THINKPIT_PORT:-8080}:8080"
     environment:
       DATABASE_URL: postgres://thinkpit:${POSTGRES_PASSWORD:?Run scripts/setup.py first}@db:5432/thinkpit?sslmode=disable
+      THINKPIT_PUBLIC_ORIGIN: ${THINKPIT_PUBLIC_ORIGIN:-}
       THINKPIT_USERNAME: ${THINKPIT_USERNAME:-admin}
       THINKPIT_PASSWORD: ${THINKPIT_PASSWORD:?Run scripts/setup.py first}
     secrets:

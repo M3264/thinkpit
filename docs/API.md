@@ -1,6 +1,6 @@
 # Backend API
 
-All `/api` routes require the single-user HTTP Basic login. The health check is unauthenticated. JSON mutation endpoints require `Content-Type: application/json`; unknown fields are rejected. Cross-origin browser mutations are rejected. Credentials belong in an authorization header, never in a URL.
+The browser signs in through `POST /api/login` with JSON `username` and `password`, receiving an eight-hour HttpOnly, SameSite=Strict session cookie. `GET /api/session` checks the session; `POST /api/logout` clears the browser cookie. Other `/api` routes require that session or the single-user HTTP Basic login. The health check is unauthenticated. JSON mutation endpoints require `Content-Type: application/json`; unknown fields are rejected. Cross-origin browser mutations are rejected. Credentials belong in an authorization header, never in a URL.
 
 The examples use curl's password prompt (`-u admin`) so secrets do not enter shell history.
 
@@ -14,7 +14,7 @@ curl -u admin -X PUT http://localhost:8080/api/providers/pollinations \
 
 Supported kinds are `openai_compat` and `anthropic`. A base URL normally ends in `/v1`; adapters append `/chat/completions` or `/messages`. `endpoint_path` overrides that suffix for compatible endpoints with different routes. URLs must use HTTP or HTTPS and cannot contain embedded credentials or query parameters.
 
-Use `api_key` for keyed providers. `PUT` replaces all provider settings, including the key; an empty key explicitly removes it. Reads and writes return `has_key` without returning the key value. `GET /api/providers` lists configured providers.
+Use `api_key` for keyed providers. `PUT` replaces provider settings. Omitting `api_key` preserves an existing saved key; an empty key explicitly removes it. Reads and writes return `has_key` without returning the key value. `GET /api/providers` lists configured providers.
 
 ## Create and start
 
@@ -52,7 +52,7 @@ A failed conversation needs an explicit human message followed by resume to retr
 ## Read, export, delete
 
 - `GET /api/conversations` returns the latest 100 records.
-- `GET /api/conversations/{id}` returns the authoritative snapshot, including participant identities, message statuses, attempts, usage, and a pending essential question.
+- `GET /api/conversations/{id}` returns the authoritative snapshot, including participant identities, message statuses, attempts, usage, a pending essential question, and `last_event_id`. The snapshot and cursor are read atomically; use this cursor when first subscribing to avoid replaying older snapshots.
 - `GET /api/conversations/{id}/export` downloads Markdown.
 - `DELETE /api/conversations/{id}` removes the record and all associated events. Active calls cancel when their worker observes the deletion.
 

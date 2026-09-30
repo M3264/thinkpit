@@ -103,7 +103,8 @@ func (s *Store) Create(ctx context.Context, c *conversation.Conversation) error 
 }
 func (s *Store) Get(ctx context.Context, id string) (*conversation.Conversation, error) {
 	var data []byte
-	err := s.Pool.QueryRow(ctx, "SELECT document FROM conversations WHERE id=$1", id).Scan(&data)
+	var cursor int64
+	err := s.Pool.QueryRow(ctx, "SELECT document,COALESCE((SELECT max(id) FROM events WHERE conversation_id=$1),0) FROM conversations WHERE id=$1", id).Scan(&data, &cursor)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -112,6 +113,7 @@ func (s *Store) Get(ctx context.Context, id string) (*conversation.Conversation,
 	}
 	var c conversation.Conversation
 	err = json.Unmarshal(data, &c)
+	c.LastEventID = cursor
 	return &c, err
 }
 func (s *Store) List(ctx context.Context) ([]*conversation.Conversation, error) {

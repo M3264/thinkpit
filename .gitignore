@@ -10,3 +10,12 @@ coverage.out
 __pycache__/
 *.pyc
 /thinkpit
+/web/node_modules/
+/web/dist/
+/web/test-results/
+/web/playwright-report/
+/.impeccable/
+/PRODUCT.md
+/DESIGN.md
+
+*.tsbuildinfo

@@ -313,6 +313,15 @@ func TestHTTPAuthSecretsAndEventReplay(t *testing.T) {
 	if err != nil || len(providers) != 2 || !providers[0].HasKey || providers[0].APIKey != "" {
 		t.Fatal("provider key exposed")
 	}
+	resp = request("PUT", "/api/providers/one", `{"name":"Renamed","kind":"openai_compat","base_url":"http://localhost:9999"}`)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatal("provider edit failed")
+	}
+	preserved, err := s.Provider(context.Background(), "one")
+	if err != nil || preserved.APIKey != "sensitive-test-key" {
+		t.Fatal("omitted key did not preserve saved credential")
+	}
 	var encrypted []byte
 	if err = s.Pool.QueryRow(context.Background(), "SELECT encrypted_key FROM providers WHERE id='one'").Scan(&encrypted); err != nil {
 		t.Fatal(err)
@@ -329,6 +338,10 @@ func TestHTTPAuthSecretsAndEventReplay(t *testing.T) {
 	events, err := s.Events(context.Background(), c.ID, 0)
 	if err != nil || len(events) != 2 {
 		t.Fatal("events missing")
+	}
+	snapshot, err := s.Get(context.Background(), c.ID)
+	if err != nil || snapshot.LastEventID != events[len(events)-1].ID || snapshot.State != conversation.Running {
+		t.Fatal("snapshot event cursor does not match authoritative state")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	req, _ := http.NewRequestWithContext(ctx, "GET", api.URL+"/api/conversations/"+c.ID+"/events", nil)

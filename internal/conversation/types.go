@@ -65,6 +65,7 @@ type Attempt struct {
 	Error          string `json:"error,omitempty"`
 }
 type Conversation struct {
+	LastEventID        int64           `json:"last_event_id,omitempty"`
 	ID                 string          `json:"id"`
 	Topic              string          `json:"topic"`
 	State              State           `json:"state"`
