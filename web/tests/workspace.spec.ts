@@ -477,6 +477,9 @@ test('desktop chat keeps long model roster beside a readable transcript', async 
   await page.setViewportSize({width,height});await page.goto('/?conversation=test-conversation');await expect(page.locator('.conversation-roster')).toBeVisible();
   const bounds=await page.evaluate(()=>{const transcript=document.querySelector('.transcript')!.getBoundingClientRect(),reading=document.querySelector('.conversation-reading')!.getBoundingClientRect(),roster=document.querySelector('.conversation-roster')!.getBoundingClientRect(),composer=document.querySelector('.composer-area')!.getBoundingClientRect();return{height:transcript.height,readingRight:reading.right,rosterLeft:roster.left,transcriptBottom:transcript.bottom,composerTop:composer.top,documentWidth:document.documentElement.scrollWidth}});
   expect(bounds.height).toBeGreaterThan(height*0.4);expect(bounds.rosterLeft).toBeGreaterThanOrEqual(bounds.readingRight);expect(bounds.transcriptBottom).toBeLessThanOrEqual(bounds.composerTop+1);expect(bounds.documentWidth).toBeLessThanOrEqual(width);
+  await page.evaluate(()=>document.fonts.ready);
+  const prose=await page.locator('.message-body').first().evaluate(el=>({width:el.getBoundingClientRect().width,max:getComputedStyle(el).maxWidth,font:getComputedStyle(el).fontFamily}));
+  expect(prose.width).toBeLessThanOrEqual(760);
   await page.locator('.transcript').evaluate(el=>el.scrollTop=0);
   await page.screenshot({path:`../.impeccable/review/layout-fix/desktop-chat-${width}.png`});
  }

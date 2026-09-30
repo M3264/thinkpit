@@ -2184,4 +2184,4 @@ html, body, #root { height: 100%; }
 .desktop-menu { display: inline-flex; }
 .app.rail-collapsed > .rail { display: none; }
 @media (max-width: 640px) { .desktop-menu { display: none; } }
-.message-body { max-width: 75ch; }
+.message-body { max-width: min(75ch, 42rem); }
