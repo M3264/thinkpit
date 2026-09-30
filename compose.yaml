@@ -4,7 +4,7 @@ services:
     image: thinkpit:local
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${THINKPIT_PORT:-8080}:8080"
+      - "${THINKPIT_BIND:-127.0.0.1}:${THINKPIT_PORT:-8080}:8080"
     environment:
       DATABASE_URL: postgres://thinkpit:${POSTGRES_PASSWORD:?Run scripts/setup.py first}@db:5432/thinkpit?sslmode=disable
       THINKPIT_PUBLIC_ORIGIN: ${THINKPIT_PUBLIC_ORIGIN:-}

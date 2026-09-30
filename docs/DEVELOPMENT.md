@@ -31,4 +31,4 @@ go build -o bin/thinkpit ./cmd/thinkpit
 
 For free OpenRouter models, set `OPENROUTER_API_KEY` and use `examples/openrouter.json`. The eight-scenario evaluation runner is `scripts/evaluate.py`.
 
-Back up PostgreSQL and `secrets/deployment.key` together. Keep the deployment bound to loopback or serve it behind an HTTPS proxy. `THINKPIT_PORT` changes the Compose host port. Set `THINKPIT_PUBLIC_ORIGIN` to the external origin (for example `https://thinkpit.example`) when using a reverse proxy, so browser mutation checks and secure session cookies match that origin. Local endpoints must be reachable from the application container.
+Back up PostgreSQL and `secrets/deployment.key` together. Keep the deployment bound to loopback or serve it behind an HTTPS proxy. `THINKPIT_PORT` changes the Compose host port. `THINKPIT_BIND` defaults to `127.0.0.1`; set it to `0.0.0.0` in `.env` to expose that port publicly. Set `THINKPIT_PUBLIC_ORIGIN` to the external origin (for example `https://thinkpit.example`) when using a reverse proxy, so browser mutation checks and secure session cookies match that origin. Local endpoints must be reachable from the application container.
