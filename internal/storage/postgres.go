@@ -193,7 +193,7 @@ func (s *Store) Claim(ctx context.Context, owner string) (*conversation.Conversa
 	}
 	defer tx.Rollback(ctx)
 	var data []byte
-	err = tx.QueryRow(ctx, "SELECT document FROM conversations WHERE state='running' AND (lease_until IS NULL OR lease_until<now()) ORDER BY updated_at FOR UPDATE SKIP LOCKED LIMIT 1").Scan(&data)
+	err = tx.QueryRow(ctx, "SELECT document FROM conversations WHERE state='running' AND (document->>'retry_at' IS NULL OR (document->>'retry_at')::timestamptz<=now()) AND (lease_until IS NULL OR lease_until<now()) ORDER BY updated_at FOR UPDATE SKIP LOCKED LIMIT 1").Scan(&data)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

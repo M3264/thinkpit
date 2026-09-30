@@ -41,13 +41,14 @@ Creation defaults: questions enabled, 24 turn attempts, 100,000 token budget uni
 | --- | --- | --- |
 | `start`, `resume` | None | Runs a ready/paused conversation; a pending essential question still blocks |
 | `message` | `text` | Adds human input, interrupts active work, answers a pending question, wakes an idle conversation |
+| `retry` | None | Retries a failed contribution with the same participant and context; previous incomplete attempts remain recorded |
 | `pause` | None | Interrupts active work; retains any pending question |
 | `stop` | None | Interrupts work and stops permanently |
 | `skip_question` | None | Records an explicit skip and releases the pending question |
 | `questions` | `ask_questions` boolean | Changes question policy, interrupts active work, releases a pending question when disabled |
 | `summary` | None | Requests a cited summary from the next participant while ready, paused, or stopped; caps still apply |
 
-A failed conversation needs an explicit human message followed by resume to retry with the corrected provider settings. Already-stopped conversations can be exported, deleted, or summarized but cannot resume ordinary discussion. A requested summary ends paused, or returns to stopped if the conversation was stopped.
+A failed conversation can use `retry` directly, or an explicit human message followed by resume after changing context or provider settings. Already-stopped conversations can be exported, deleted, or summarized but cannot resume ordinary discussion. A requested summary ends paused, or returns to stopped if the conversation was stopped.
 
 ## Read, export, delete
 
@@ -85,3 +86,5 @@ HTTP 400 means malformed input, 401 means authentication is required, 403 means 
 `POST /api/search` takes JSON `query` and returns search results and partial-engine warnings. `POST /api/sources` takes JSON `url`, fetches a public HTTP(S) page, and extracts readable text. Private network addresses and redirects to them are rejected.
 
 Uploads and fetched pages return `evidence` and a signed `token`, valid for 24 hours. Send those strings in `context_tokens` when creating a conversation or submitting a `message` control. Each item is limited to a 16 KB excerpt; conversations hold at most 20 items and 96 KB of context. Evidence persists with the conversation, appears in snapshots and exports, and is deleted with it. Context is marked as untrusted reference material in model prompts. Search only runs when requested by the human; models do not autonomously browse or run tools.
+
+Transient connection errors, HTTP 408/429, and 5xx responses before any streamed text get up to two automatic retries (three attempts total), with 2s/4s backoff or a longer provider `Retry-After`. Each retry creates a separate recorded attempt and reserves tokens; existing global turn/token caps still apply. Partial replies and permanent failures (such as 400/401) require manual retry. Retry timestamps and counts persist in snapshots; workers skip future retry jobs, including after restart. Pause, stop, or human interruption cancel a queued retry. `retry` after exhaustion starts a fresh bounded retry sequence while preserving global caps.

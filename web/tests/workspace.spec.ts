@@ -144,7 +144,7 @@ async function mock(page: Page, { login = false, empty = false } = {}) {
         });
         current.pending_question = null;
         current.state = "running";
-      } else if (["start", "resume"].includes(body.action))
+      } else if (["start", "resume", "retry"].includes(body.action))
         current.state = "running";
       else if (body.action === "pause") current.state = "paused";
       else if (body.action === "stop") current.state = "stopped";
@@ -493,4 +493,14 @@ test('desktop setup ends with its form and navigation toggle survives reload',as
  const gap=await page.evaluate(()=>document.querySelector('.new-main')!.getBoundingClientRect().bottom-document.querySelector('.save-setup')!.getBoundingClientRect().bottom);expect(gap).toBeLessThan(110);
  await page.screenshot({path:'../.impeccable/review/layout-fix/desktop-setup-bottom.png'});
  await page.getByRole('button',{name:'Collapse navigation'}).click();await expect(page.locator('.app > .rail')).not.toBeVisible();await page.reload();await expect(page.getByRole('button',{name:'Expand navigation'})).toBeVisible();await page.getByRole('button',{name:'Expand navigation'}).click();await expect(page.locator('.app > .rail')).toBeVisible();
+});
+
+
+test('retry a failed reply without a new human message',async({page})=>{
+ await mock(page);await page.route('**/api/conversations/test-conversation',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({...initial,state:'failed',attempts:[{id:'failed-turn',message_id:'reply-b',status:'failed',error:'provider returned HTTP 429'}]})}));await page.goto('/?conversation=test-conversation');
+ await expect(page.getByRole('button',{name:'Retry reply',exact:true})).toBeVisible();const request=page.waitForRequest(r=>r.url().endsWith('/controls')&&r.postDataJSON().action==='retry');await page.getByRole('button',{name:'Retry reply',exact:true}).click();await request;await expect(page.getByRole('button',{name:'Pause',exact:true})).toBeVisible();
+});
+
+test('show queued automatic retry and allow pausing it',async({page})=>{
+ await mock(page);await page.route('**/api/conversations/test-conversation',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({...initial,state:'running',retry_at:new Date(Date.now()+60000).toISOString(),automatic_retry_count:1})}));await page.goto('/?conversation=test-conversation');await expect(page.getByText(/Automatic retry 1\/2 is scheduled/)).toBeVisible();await expect(page.getByText('Waiting to retry',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Pause',exact:true}).click();await expect(page.getByText(/Automatic retry 1\/2 is scheduled/)).not.toBeVisible();await expect(page.getByRole('button',{name:'Resume',exact:true})).toBeVisible();
 });

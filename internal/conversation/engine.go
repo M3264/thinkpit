@@ -74,6 +74,14 @@ func (c *Conversation) interrupt(reason string) {
 }
 func (c *Conversation) Command(action, text string, ask *bool) error {
 	switch action {
+	case "retry":
+		if c.State != Failed || c.ActiveID != "" || len(c.Attempts) == 0 || c.Attempts[len(c.Attempts)-1].Status != "failed" {
+			return ErrInvalid
+		}
+		c.RetryAt = nil
+		c.RetryCount = 0
+		c.State = Running
+		c.Reason = ""
 	case "start", "resume":
 		if c.State != Ready && c.State != Paused {
 			return ErrInvalid
@@ -84,21 +92,30 @@ func (c *Conversation) Command(action, text string, ask *bool) error {
 			c.State = Running
 		}
 		c.Reason = ""
+		c.RetryAt = nil
+		c.RetryCount = 0
 		c.resetRound()
 	case "pause":
 		if c.State != Running && c.State != Waiting {
 			return ErrInvalid
 		}
+		c.RetryAt = nil
 		c.interrupt("paused by user")
 		c.State = Paused
 		c.Reason = "user_pause"
 	case "stop":
+		c.RetryAt = nil
 		c.interrupt("stopped by user")
 		c.State = Stopped
 		c.Reason = "user_stop"
 	case "message":
 		if strings.TrimSpace(text) == "" || len(text) > 32000 {
 			return ErrInvalid
+		}
+		c.RetryAt = nil
+		c.RetryCount = 0
+		if c.State == Running {
+			c.Reason = ""
 		}
 		c.interrupt("interrupted by user message")
 		c.addUser(text)
@@ -157,6 +174,13 @@ func (c *Conversation) Recover() {
 	c.UpdatedAt = time.Now().UTC()
 }
 func (c *Conversation) Begin() (Request, string, bool) {
+	if c.RetryAt != nil && time.Now().Before(*c.RetryAt) {
+		return Request{}, "", false
+	}
+	c.RetryAt = nil
+	if c.Reason == "retry_wait" {
+		c.Reason = ""
+	}
 	if c.State != Running || c.ActiveID != "" {
 		return Request{}, "", false
 	}
@@ -278,8 +302,25 @@ func (c *Conversation) Finish(aid string, result Result, callErr error) bool {
 		m.Status = "incomplete"
 		c.State = Failed
 		c.Reason = "provider_failure"
+		var transient interface {
+			Retryable() bool
+			RetryAfter() time.Duration
+		}
+		if errors.As(callErr, &transient) && transient.Retryable() && m.Content == "" && c.RetryCount < 2 {
+			delay := time.Duration(1<<c.RetryCount) * 2 * time.Second
+			if transient.RetryAfter() > delay {
+				delay = transient.RetryAfter()
+			}
+			when := time.Now().Add(delay)
+			c.RetryAt = &when
+			c.RetryCount++
+			c.State = Running
+			c.Reason = "retry_wait"
+		}
 		return true
 	}
+	c.RetryCount = 0
+	c.RetryAt = nil
 	a.Status = "complete"
 	m.Status = "complete"
 	m.Content = result.Text

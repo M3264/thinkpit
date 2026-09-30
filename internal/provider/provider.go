@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -158,11 +159,11 @@ func (a *Adapter) Stream(ctx context.Context, r conversation.Request, emit func(
 		if ctx.Err() != nil {
 			return conversation.Result{}, ctx.Err()
 		}
-		return conversation.Result{}, errors.New("provider connection failed")
+		return conversation.Result{}, &RetryError{}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return conversation.Result{}, fmt.Errorf("provider returned HTTP %d", resp.StatusCode)
+		return conversation.Result{}, &RetryError{Status: resp.StatusCode, Delay: retryAfter(resp.Header.Get("Retry-After"))}
 	} // Never echo upstream bodies or URLs: they may contain keys.
 	f := filter{emit: emit}
 	usage := conversation.Usage{}
@@ -284,4 +285,30 @@ func readSSE(r io.Reader, handle func(string) error) error {
 		return errors.New("provider stream read failed")
 	}
 	return dispatch()
+}
+
+// RetryError exposes safe scheduling metadata without the upstream response body.
+type RetryError struct {
+	Status int
+	Delay  time.Duration
+}
+
+func (e *RetryError) Error() string {
+	if e.Status == 0 {
+		return "provider connection failed"
+	}
+	return fmt.Sprintf("provider returned HTTP %d", e.Status)
+}
+func (e *RetryError) Retryable() bool {
+	return e.Status == 0 || e.Status == 408 || e.Status == 429 || e.Status >= 500 && e.Status <= 599
+}
+func (e *RetryError) RetryAfter() time.Duration { return e.Delay }
+func retryAfter(value string) time.Duration {
+	if seconds, err := strconv.ParseInt(value, 10, 32); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if date, err := http.ParseTime(value); err == nil && date.After(time.Now()) {
+		return time.Until(date)
+	}
+	return 0
 }

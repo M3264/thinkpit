@@ -29,6 +29,8 @@ export type Message = {
   created_at: string;
 };
 export type Conversation = {
+  retry_at?: string;
+  automatic_retry_count?: number;
   context?: Evidence[];
   id: string;
   topic: string;

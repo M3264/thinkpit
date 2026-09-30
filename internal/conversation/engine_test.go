@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func fixture(t *testing.T, ask bool) *Conversation {
@@ -240,5 +241,100 @@ func TestHumanEvidenceEntersContextAndExport(t *testing.T) {
 	}
 	if !strings.Contains(c.Markdown(), "https://example.com/article") {
 		t.Fatal("export lost provenance")
+	}
+}
+
+type temporaryFailure struct{ delay time.Duration }
+
+func (e temporaryFailure) Error() string             { return "temporary provider failure" }
+func (e temporaryFailure) Retryable() bool           { return true }
+func (e temporaryFailure) RetryAfter() time.Duration { return e.delay }
+func TestAutomaticRetryIsBoundedAndManualRetryKeepsIdentity(t *testing.T) {
+	c := fixture(t, false)
+	var original Request
+	for i := 0; i < 3; i++ {
+		req, id, ok := c.Begin()
+		if !ok {
+			t.Fatal("could not begin retry")
+		}
+		if i == 0 {
+			original = req
+		}
+		if req.Participant.ID != original.Participant.ID {
+			t.Fatal("retry changed identity")
+		}
+		c.Finish(id, Result{}, temporaryFailure{time.Minute})
+		if i < 2 {
+			if c.State != Running || c.RetryAt == nil || time.Until(*c.RetryAt) < 59*time.Second {
+				t.Fatal("Retry-After not respected")
+			}
+			if _, _, ok := c.Begin(); ok {
+				t.Fatal("call started before backoff")
+			}
+			past := time.Now().Add(-time.Second)
+			c.RetryAt = &past
+		}
+	}
+	if c.State != Failed || len(c.Attempts) != 3 {
+		t.Fatal("retry did not exhaust after three attempts")
+	}
+	if err := c.Command("retry", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if c.Command("retry", "", nil) == nil {
+		t.Fatal("duplicate retry accepted")
+	}
+	req, id, ok := c.Begin()
+	if !ok || req.Participant.ID != original.Participant.ID {
+		t.Fatal("manual retry changed participant")
+	}
+	c.Finish(id, Result{Text: "Recovered contribution", Control: Control{}}, nil)
+	if len(c.Messages) != 5 || c.Messages[1].Status != "incomplete" || c.Messages[4].Status != "complete" || c.RetryCount != 0 {
+		t.Fatal("retry history lost or duplicate completion")
+	}
+}
+func TestRetryRespectsControlsLimitsAndPartialOutput(t *testing.T) {
+	for _, action := range []string{"pause", "stop"} {
+		c := fixture(t, false)
+		_, id, _ := c.Begin()
+		c.Finish(id, Result{}, temporaryFailure{})
+		if err := c.Command(action, "", nil); err != nil {
+			t.Fatal(err)
+		}
+		if c.RetryAt != nil {
+			t.Fatal("queued retry retained")
+		}
+		if _, _, ok := c.Begin(); ok {
+			t.Fatal("called after control")
+		}
+	}
+	c := fixture(t, false)
+	c.Limits.MaxTurns = 1
+	_, id, _ := c.Begin()
+	c.Finish(id, Result{}, temporaryFailure{})
+	c.RetryAt = nil
+	if _, _, ok := c.Begin(); ok || c.Reason != "turn_limit" {
+		t.Fatal("retry bypassed turn cap")
+	}
+	c = fixture(t, false)
+	_, id, _ = c.Begin()
+	c.Finish(id, Result{}, temporaryFailure{})
+	c.RetryAt = nil
+	c.Limits.MaxTokens = c.ChargedTokens
+	if _, _, ok := c.Begin(); ok || c.Reason != "token_limit" {
+		t.Fatal("retry bypassed token cap")
+	}
+	c = fixture(t, false)
+	_, id, _ = c.Begin()
+	c.Delta(id, "Already streamed")
+	c.Finish(id, Result{}, temporaryFailure{})
+	if c.State != Failed || c.RetryAt != nil {
+		t.Fatal("partial output automatically retried")
+	}
+	c = fixture(t, false)
+	_, id, _ = c.Begin()
+	c.Finish(id, Result{}, errors.New("permanent failure"))
+	if c.State != Failed || c.RetryAt != nil {
+		t.Fatal("permanent error retried")
 	}
 }

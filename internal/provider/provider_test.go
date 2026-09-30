@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/M3264/thinkpit/internal/conversation"
 )
@@ -106,5 +107,18 @@ func TestTruncatedStreamFails(t *testing.T) {
 	_, err := a.Stream(context.Background(), conversation.Request{}, func(string) error { return nil })
 	if err == nil {
 		t.Fatal("truncated stream marked complete")
+	}
+}
+
+func TestRetryMetadata(t *testing.T) {
+	for _, status := range []int{400, 401, 408, 429, 500, 503} {
+		e := &RetryError{Status: status}
+		want := status == 408 || status == 429 || status >= 500
+		if e.Retryable() != want {
+			t.Fatalf("status %d retry policy", status)
+		}
+	}
+	if retryAfter("120") != 120*time.Second || retryAfter("invalid") != 0 {
+		t.Fatal("Retry-After parsing failed")
 	}
 }

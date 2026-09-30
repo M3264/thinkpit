@@ -65,6 +65,8 @@ type Attempt struct {
 	Error          string `json:"error,omitempty"`
 }
 type Conversation struct {
+	RetryAt            *time.Time      `json:"retry_at,omitempty"`
+	RetryCount         int             `json:"automatic_retry_count,omitempty"`
 	Context            []Evidence      `json:"context,omitempty"`
 	LastEventID        int64           `json:"last_event_id,omitempty"`
 	ID                 string          `json:"id"`

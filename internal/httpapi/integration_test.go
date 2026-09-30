@@ -456,3 +456,78 @@ func TestWorkspaceDiscoverySavedSetupsAndEvidencePersistence(t *testing.T) {
 		t.Fatal("setup delete failed")
 	}
 }
+
+func TestPersistedRetryWaitSurvivesWorkerClaimsAndPause(t *testing.T) {
+	s := database(t)
+	ctx := context.Background()
+	c, err := conversation.New("Fictional retry proof", []conversation.Participant{{ID: "a", ProviderID: "fake", Model: "same"}}, false, conversation.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Command("start", "", nil)
+	_, id, ok := c.Begin()
+	if !ok {
+		t.Fatal("begin failed")
+	}
+	c.Finish(id, conversation.Result{}, &provider.RetryError{Status: 429, Delay: time.Hour})
+	if err = s.Create(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.Claim(ctx, "retry-worker")
+	if err != nil || claimed != nil {
+		t.Fatal("future retry claimed", err)
+	}
+	saved, err := s.Get(ctx, c.ID)
+	if err != nil || saved.RetryAt == nil || saved.RetryCount != 1 {
+		t.Fatal("retry schedule not durable", err)
+	}
+	err = s.Change(ctx, c.ID, "", "control", func(c *conversation.Conversation) (any, error) {
+		past := time.Now().Add(-time.Second)
+		c.RetryAt = &past
+		return c, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = s.Claim(ctx, "retry-worker")
+	if err != nil || claimed == nil {
+		t.Fatal("due retry not claimed", err)
+	}
+	err = s.Change(ctx, c.ID, "", "control", func(c *conversation.Conversation) (any, error) { return c, c.Command("pause", "", nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Release(ctx, c.ID, "retry-worker")
+	claimed, err = s.Claim(ctx, "another-worker")
+	if err != nil || claimed != nil {
+		t.Fatal("paused retry claimed", err)
+	}
+}
+
+func TestWorkerAutomaticallyRetries429WithoutDuplicateCompletedReply(t *testing.T) {
+	s := database(t)
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "temporary limit", 429)
+			return
+		}
+		reply(w, "openai_compat", "Recovered fictional contribution.", conversation.Control{ReadyToPause: true})
+	}))
+	defer upstream.Close()
+	saveFake(t, s, upstream.URL, "one", "openai_compat")
+	c, err := conversation.New("Fictional retry integration", []conversation.Participant{{ID: "a", ProviderID: "one", Model: "test"}}, false, conversation.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Command("start", "", nil)
+	if err = s.Create(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	startWorker(t, s)
+	done := await(t, s, c.ID, func(c *conversation.Conversation) bool { return c.State == conversation.Ready && c.Reason == "idle" })
+	if calls.Load() != 2 || len(done.Attempts) != 2 || done.Attempts[0].Status != "failed" || done.Attempts[1].Status != "complete" || len(done.Messages) != 3 {
+		t.Fatal("duplicate or missing retry result")
+	}
+}

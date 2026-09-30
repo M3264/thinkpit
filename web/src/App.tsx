@@ -419,7 +419,7 @@ export default function App() {
             <div className="top-actions">
               <span role="status" className="status">
                 <span className={`status-dot ${current.state}`} />
-                {stateName[current.state]}
+                {current.retry_at ? "Waiting to retry" : stateName[current.state]}
               </span>
               <button
                 className="icon-button"
@@ -606,13 +606,15 @@ export default function App() {
                         [...current.attempts].reverse().find((a) => a.error)
                           ?.error
                       }
-                      . Check the provider settings, add a message, and resume.
+                      . Check the provider settings or retry this reply.
                     </p>
+                    <button className="button secondary" disabled={busy} onClick={() => control("retry")}>Retry reply</button>
                     <Link href="/?view=providers">
                       Open providers <ArrowUp aria-hidden="true" size={14} />
                     </Link>
                   </div>
                 )}
+                {current.retry_at && current.state === "running" && <div className="turn-error" role="status">Provider temporarily unavailable. Automatic retry {current.automatic_retry_count}/2 is scheduled for {new Date(current.retry_at).toLocaleTimeString()}. You can pause or stop while waiting.</div>}
                 {current.reason === "turn_limit" ||
                 current.reason === "token_limit" ? (
                   <p className="limit-note">

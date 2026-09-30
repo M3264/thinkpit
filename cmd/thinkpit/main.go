@@ -207,6 +207,18 @@ func headless(ctx context.Context, args []string) error {
 		return err
 	}
 	for c.State == conversation.Running {
+		if c.RetryAt != nil {
+			delay := time.Until(*c.RetryAt)
+			if delay > 0 {
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				case <-timer.C:
+				}
+			}
+		}
 		req, aid, ok := c.Begin()
 		if err = persist(); err != nil {
 			return err
