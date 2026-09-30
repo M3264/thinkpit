@@ -101,12 +101,14 @@ export default function App() {
     [busy, setBusy] = useState(false),
     [loading, setLoading] = useState(false),
     [menu, setMenu] = useState(false),
+    [sidebarCollapsed, setSidebarCollapsed] = useState(() => { try { return localStorage.getItem("thinkpit:sidebar-collapsed") === "true"; } catch { return false; } }),
     [connected, setConnected] = useState(true),
     [remove, setRemove] = useState(false),
     [stopping, setStopping] = useState(false),
     [draftParticipants, setDraftParticipants] = useState<Participant[]>([]),
     [draftContext, setDraftContext] = useState<PreparedEvidence[]>([]),
     [sourcesOpen, setSourcesOpen] = useState(false),
+    [participantsOpen, setParticipantsOpen] = useState(false),
     [historyQuery, setHistoryQuery] = useState("");
   const params = new URLSearchParams(url),
     selected = params.get("conversation"),
@@ -384,7 +386,7 @@ export default function App() {
     );
   if (!auth) return <Login onLogin={() => setAuth(true)} />;
   return (
-    <div className="app">
+    <div className={`app ${sidebarCollapsed ? "rail-collapsed" : ""}`}>
       <a href="#main" className="skip-link">
         Skip to conversation
       </a>
@@ -396,6 +398,7 @@ export default function App() {
       )}
       <div className="workspace">
         <header className="topbar">
+          <button className="icon-button desktop-menu" aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-expanded={!sidebarCollapsed} onClick={() => { const next = !sidebarCollapsed; setSidebarCollapsed(next); try { localStorage.setItem("thinkpit:sidebar-collapsed", String(next)); } catch {} }}><PanelLeft aria-hidden="true" size={20} /></button>
           <button
             className="icon-button mobile-menu"
             onClick={() => setMenu(true)}
@@ -516,7 +519,8 @@ export default function App() {
               busy={busy}
             />
           ) : (
-            <>
+            <div className="conversation-layout">
+              <div className="conversation-reading">
               <div className="conversation-heading">
                 <h1>{current.topic}</h1>
                 <div className="run-info">
@@ -535,21 +539,7 @@ export default function App() {
                     Sources ({current.context?.length || 0})
                   </button>
                 </div>
-                <div className="participant-strip">
-                  {current.participants.map((p, i) => (
-                    <span key={p.id}>
-                      <Seal name={p.name} index={i} />
-                      <span>
-                        {p.name}
-                        <small>
-                          {p.model} ·{" "}
-                          {providers.find((x) => x.id === p.provider_id)
-                            ?.name || p.provider_id}
-                        </small>
-                      </span>
-                    </span>
-                  ))}
-                </div>
+                <button className="text-button roster-toggle" onClick={() => setParticipantsOpen(true)}>Participants ({current.participants.length})</button>
               </div>
               <div
                 ref={scrollRef}
@@ -716,10 +706,44 @@ export default function App() {
                       : "Enter to send · Shift + Enter for a new line"}
                 </p>
               </div>
-            </>
+              </div>
+              <aside className="conversation-roster" aria-label="Conversation participants">
+                <h2>Participants <span>({current.participants.length})</span></h2>
+                <div className="participant-strip">
+                  {current.participants.map((p, i) => (
+                    <span key={p.id}>
+                      <Seal name={p.name} index={i} />
+                      <span>
+                        {p.name}
+                        <small>
+                          {p.model} ·{" "}
+                          {providers.find((x) => x.id === p.provider_id)
+                            ?.name || p.provider_id}
+                        </small>
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              </aside>
+            </div>
           )}
         </main>
       </div>
+      {participantsOpen && current && (<Dialog title="Participants" close={() => setParticipantsOpen(false)}>                <div className="participant-strip">
+                  {current.participants.map((p, i) => (
+                    <span key={p.id}>
+                      <Seal name={p.name} index={i} />
+                      <span>
+                        {p.name}
+                        <small>
+                          {p.model} ·{" "}
+                          {providers.find((x) => x.id === p.provider_id)
+                            ?.name || p.provider_id}
+                        </small>
+                      </span>
+                    </span>
+                  ))}
+                </div></Dialog>)}
       {sourcesOpen && current && (
         <Dialog
           title="Conversation sources"
@@ -1000,7 +1024,8 @@ function NewConversation({
     [setups, setSetups] = useState<Setup[]>([]),
     [setupName, setSetupName] = useState(""),
     [setupNotice, setSetupNotice] = useState(""),
-    [contextBusy, setContextBusy] = useState(false);
+    [contextBusy, setContextBusy] = useState(false),
+    [modelsOpen, setModelsOpen] = useState(false);
   useEffect(() => {
     api<Setup[]>("/setups")
       .then(setSetups)
@@ -1152,6 +1177,7 @@ function NewConversation({
           >
             <header>
               <h2 id="participants-title">At the table</h2>
+              <button type="button" className="button secondary browse-models" onClick={() => setModelsOpen(true)}><Shapes aria-hidden="true" size={16} />Browse models</button>
               {providers.length > 0 && (
                 <button
                   type="button"
@@ -1397,7 +1423,10 @@ function NewConversation({
           </p>
         </form>
       </div>
-      <ModelLibrary providers={providers} onChoose={chooseModel} compact />
+      {modelsOpen && <Dialog title="Choose models" className="model-picker" close={() => setModelsOpen(false)}>
+        <ModelLibrary providers={providers} onChoose={chooseModel} compact />
+        <div className="picker-footer"><span>{participants.length} participants selected</span><button type="button" className="button primary" onClick={() => setModelsOpen(false)}>Done choosing models</button></div>
+      </Dialog>}
     </div>
   );
 }

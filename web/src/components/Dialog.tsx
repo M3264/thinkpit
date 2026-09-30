@@ -5,10 +5,12 @@ export function Dialog({
   title,
   children,
   close,
+  className,
 }: {
   title: string;
   children: ReactNode;
   close: () => void;
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -18,6 +20,7 @@ export function Dialog({
   return createPortal(
     <dialog
       ref={ref}
+      className={className}
       onCancel={close}
       aria-label={title}
       onClick={(e) => {

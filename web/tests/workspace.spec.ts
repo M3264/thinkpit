@@ -419,6 +419,7 @@ test("stream snapshots replace provisional text and reconnect from the last even
 
 test('discover, filter, compare, and add models; save and reload a setup',async({page})=>{
  await mock(page);await page.goto('/');
+ await page.getByRole('button',{name:'Browse models',exact:true}).click();
  await expect(page.getByRole('heading',{name:'Discover models'})).toBeVisible();
  await page.getByRole('button',{name:'Free',exact:true}).click();
  await expect(page.getByRole('heading',{name:'Cedar Reasoner'})).toBeVisible();
@@ -430,13 +431,15 @@ test('discover, filter, compare, and add models; save and reload a setup',async(
  await page.getByRole('button',{name:'Add Cedar Reasoner'}).click();
  await expect(page.getByLabel('Participant 1 name')).toHaveValue('Cedar Reasoner');
  await page.getByRole('button',{name:'Add Orchid Vision'}).click();
+ await page.getByRole('button',{name:'Clear comparison'}).click();
+ await capture(page,'picker');
+ await page.getByRole('button',{name:'Done choosing models'}).click();
  await page.getByLabel('Save these participants').fill('Fictional research team');
  await page.getByRole('button',{name:'Save setup',exact:true}).click();
  await expect(page.getByText('Setup saved.',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Remove participant 2'}).click();
  await page.getByLabel('Use a saved setup').selectOption({label:'Fictional research team'});
  await expect(page.getByLabel('Participant 2 name')).toHaveValue('Orchid Vision');
- await page.getByRole('button',{name:'Clear comparison'}).click();
  await capture(page,'discovery');
  await page.goto('/?view=models');
  await expect(page.getByRole('heading',{name:'Model library'})).toBeVisible();
@@ -461,4 +464,30 @@ test('attach a file, search and select web evidence, then preserve sources in co
  await page.getByRole('button',{name:'Sources (1)'}).click();
  await page.getByRole('dialog').getByText('notes.md',{exact:true}).click();
  await expect(page.getByText('Fictional volunteer budget is 40 hours.',{exact:true})).toBeVisible();
+});
+
+
+test('desktop chat keeps long model roster beside a readable transcript', async ({page}) => {
+ test.skip(test.info().project.name !== 'desktop');
+ await mock(page);
+ const participants = Array.from({length:12},(_,i)=>({id:`speaker-${i}`,name:`Fictional research participant ${i+1}`,provider_id:'pollinations',model:`fictional-provider/long-model-identifier-${i+1}`}));
+ const current={...structuredClone(initial),participants,messages:[initial.messages[0],...Array.from({length:24},(_,i)=>({id:`long-${i}`,speaker_id:participants[i%12].id,status:'complete',created_at:initial.updated_at,content:`Fictional discussion contribution ${i+1}. The library can trial longer weekend hours with a small volunteer rota. Keep a record of attendance and compare the workload before deciding whether to extend the trial.`}))]};
+ await page.route('**/api/conversations/test-conversation',r=>r.fulfill({contentType:'application/json',body:JSON.stringify(current)}));
+ for (const [width,height] of [[1440,844],[1280,720]]) {
+  await page.setViewportSize({width,height});await page.goto('/?conversation=test-conversation');await expect(page.locator('.conversation-roster')).toBeVisible();
+  const bounds=await page.evaluate(()=>{const transcript=document.querySelector('.transcript')!.getBoundingClientRect(),reading=document.querySelector('.conversation-reading')!.getBoundingClientRect(),roster=document.querySelector('.conversation-roster')!.getBoundingClientRect(),composer=document.querySelector('.composer-area')!.getBoundingClientRect();return{height:transcript.height,readingRight:reading.right,rosterLeft:roster.left,transcriptBottom:transcript.bottom,composerTop:composer.top,documentWidth:document.documentElement.scrollWidth}});
+  expect(bounds.height).toBeGreaterThan(height*0.4);expect(bounds.rosterLeft).toBeGreaterThanOrEqual(bounds.readingRight);expect(bounds.transcriptBottom).toBeLessThanOrEqual(bounds.composerTop+1);expect(bounds.documentWidth).toBeLessThanOrEqual(width);
+  await page.locator('.transcript').evaluate(el=>el.scrollTop=0);
+  await page.screenshot({path:`../.impeccable/review/layout-fix/desktop-chat-${width}.png`});
+ }
+});
+
+test('desktop setup ends with its form and navigation toggle survives reload',async({page})=>{
+ test.skip(test.info().project.name !== 'desktop');await mock(page);await page.setViewportSize({width:1440,height:844});await page.goto('/');
+ await page.getByRole('button',{name:'Add your first participant'}).click();await page.getByRole('button',{name:'Add participant',exact:true}).click();
+ await expect(page.locator('.new-main .model-library')).toHaveCount(0);
+ await page.locator('.new-main').evaluate(el=>el.scrollTop=el.scrollHeight);
+ const gap=await page.evaluate(()=>document.querySelector('.new-main')!.getBoundingClientRect().bottom-document.querySelector('.save-setup')!.getBoundingClientRect().bottom);expect(gap).toBeLessThan(110);
+ await page.screenshot({path:'../.impeccable/review/layout-fix/desktop-setup-bottom.png'});
+ await page.getByRole('button',{name:'Collapse navigation'}).click();await expect(page.locator('.app > .rail')).not.toBeVisible();await page.reload();await expect(page.getByRole('button',{name:'Expand navigation'})).toBeVisible();await page.getByRole('button',{name:'Expand navigation'}).click();await expect(page.locator('.app > .rail')).toBeVisible();
 });
