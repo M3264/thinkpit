@@ -1,0 +1,190 @@
+[
+  {
+    "scenario": "library",
+    "mode": "single",
+    "exit_code": 1,
+    "seconds": 24.77,
+    "state": "failed",
+    "reason": "provider_failure",
+    "completed_turns": 0,
+    "charged_tokens": 1494,
+    "errors": [
+      "provider exceeded token reservation"
+    ]
+  },
+  {
+    "scenario": "library",
+    "mode": "conversation",
+    "exit_code": 0,
+    "seconds": 44.02,
+    "state": "ready",
+    "reason": "idle",
+    "completed_turns": 2,
+    "charged_tokens": 1573,
+    "errors": []
+  },
+  {
+    "scenario": "launch",
+    "mode": "single",
+    "exit_code": 0,
+    "seconds": 27.89,
+    "state": "ready",
+    "reason": "idle",
+    "completed_turns": 1,
+    "charged_tokens": 644,
+    "errors": []
+  },
+  {
+    "scenario": "launch",
+    "mode": "conversation",
+    "exit_code": 0,
+    "seconds": 59.64,
+    "state": "ready",
+    "reason": "idle",
+    "completed_turns": 2,
+    "charged_tokens": 1545,
+    "errors": []
+  },
+  {
+    "scenario": "architecture",
+    "mode": "single",
+    "exit_code": 1,
+    "seconds": 30.14,
+    "state": "failed",
+    "reason": "provider_failure",
+    "completed_turns": 0,
+    "charged_tokens": 687,
+    "errors": [
+      "missing conversation control record"
+    ]
+  },
+  {
+    "scenario": "architecture",
+    "mode": "conversation",
+    "exit_code": 0,
+    "seconds": 60.99,
+    "state": "ready",
+    "reason": "idle",
+    "completed_turns": 2,
+    "charged_tokens": 2141,
+    "errors": []
+  },
+  {
+    "scenario": "pricing",
+    "mode": "single",
+    "exit_code": 0,
+    "seconds": 33.43,
+    "state": "ready",
+    "reason": "idle",
+    "completed_turns": 1,
+    "charged_tokens": 1181,
+    "errors": []
+  },
+  {
+    "scenario": "pricing",
+    "mode": "conversation",
+    "exit_code": 0,
+    "seconds": 59.84,
+    "state": "ready",
+    "reason": "idle",
+    "completed_turns": 2,
+    "charged_tokens": 1649,
+    "errors": []
+  },
+  {
+    "scenario": "community",
+    "mode": "single",
+    "exit_code": 0,
+    "seconds": 27.17,
+    "state": "ready",
+    "reason": "idle",
+    "completed_turns": 1,
+    "charged_tokens": 722,
+    "errors": []
+  },
+  {
+    "scenario": "community",
+    "mode": "conversation",
+    "exit_code": 1,
+    "seconds": 27.03,
+    "state": "failed",
+    "reason": "provider_failure",
+    "completed_turns": 0,
+    "charged_tokens": 2862,
+    "errors": [
+      "provider did not finish contribution"
+    ]
+  },
+  {
+    "scenario": "learning",
+    "mode": "single",
+    "exit_code": 0,
+    "seconds": 36.69,
+    "state": "ready",
+    "reason": "idle",
+    "completed_turns": 1,
+    "charged_tokens": 1157,
+    "errors": []
+  },
+  {
+    "scenario": "learning",
+    "mode": "conversation",
+    "exit_code": 0,
+    "seconds": 54.68,
+    "state": "ready",
+    "reason": "idle",
+    "completed_turns": 2,
+    "charged_tokens": 1578,
+    "errors": []
+  },
+  {
+    "scenario": "migration",
+    "mode": "single",
+    "exit_code": 1,
+    "seconds": 30.66,
+    "state": "failed",
+    "reason": "provider_failure",
+    "completed_turns": 0,
+    "charged_tokens": 777,
+    "errors": [
+      "missing conversation control record"
+    ]
+  },
+  {
+    "scenario": "migration",
+    "mode": "conversation",
+    "exit_code": 1,
+    "seconds": 27.84,
+    "state": "failed",
+    "reason": "provider_failure",
+    "completed_turns": 0,
+    "charged_tokens": 579,
+    "errors": [
+      "missing conversation control record"
+    ]
+  },
+  {
+    "scenario": "design",
+    "mode": "single",
+    "exit_code": 1,
+    "seconds": 30.26,
+    "state": "failed",
+    "reason": "provider_failure",
+    "completed_turns": 0,
+    "charged_tokens": 2847,
+    "errors": [
+      "provider did not finish contribution"
+    ]
+  },
+  {
+    "scenario": "design",
+    "mode": "conversation",
+    "exit_code": 0,
+    "seconds": 62.15,
+    "state": "ready",
+    "reason": "idle",
+    "completed_turns": 2,
+    "charged_tokens": 1535,
+    "errors": []
+  }
+]

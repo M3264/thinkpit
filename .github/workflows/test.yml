@@ -1,0 +1,29 @@
+name: Backend tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: thinkpit-test-only
+          POSTGRES_DB: thinkpit_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d thinkpit_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      THINKPIT_TEST_DATABASE_URL: postgres://postgres:thinkpit-test-only@localhost:5432/thinkpit_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build ./cmd/thinkpit
+      - run: docker build -t thinkpit:test .

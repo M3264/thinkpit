@@ -1,0 +1,328 @@
+ThinkPit: Product Plan
+Product name: ThinkPit (working title was "Brainstormers", which is taken; see section 16). Competitive notes come from public landing pages found in search, not hands-on testing, so verify before relying on any gap claim.
+
+1. Product definition and target users
+One line: A workbench where you pick any set of AI models, define how they should work together, and get a traceable, decision-ready result instead of a pile of separate answers.
+
+Core idea: The session protocol is the product. Models, roles, tools, turn order, visibility rules and output format are all user-editable, and nothing is hardcoded to "3 agents" or fixed personas.
+
+Target users
+
+Solo builders and founders: stress-test product ideas, architecture, positioning.
+Developers and technical leads: design reviews, technical plans, tradeoff analysis.
+Researchers and analysts: multi-source research summaries with dissent recorded.
+Consultants and small teams: strategy and decision memos with an audit trail.
+Local-AI and cost-conscious users: mix free/local models with a few paid ones.
+2. What makes it different
+The space is not empty. Multi-model debate tools already exist (Roundtable, Agents Arena, Multi Agent Debates/Delibora, Crucible, AI Council), and several products already use the name Brainstormer. Differentiate on these, not on "models debate":
+
+Protocol as a first-class object. Users compose phases (blind draft, cross-review, rebuttal, vote, synthesis) with rules for who sees what, rather than picking from a fixed list of modes. Protocols are saved, shared, forked and exported as JSON/YAML.
+Real tool and skill use inside the discussion. Agents can search, fetch, run code, read files and call MCP tools, and the evidence they gather is attached to their claims.
+Provider-agnostic and free-first. One adapter layer for OpenAI-compatible endpoints, OpenRouter, Ollama, local servers and native APIs, with per-agent model choice and cost caps.
+Provenance and dissent. Every claim in the final result links back to the messages, tools and models it came from. Disagreements are kept, not averaged away.
+Self-hostable and local-capable. Cloud apps cannot reach localhost Ollama. A Docker/desktop mode solves that and is a real selling point for privacy.
+Cost control. Token and dollar budgets per session, per phase and per agent, with an estimate before you run.
+3. Core user experience
+Prompt. Enter a topic, problem, idea or question. Optionally attach files, links or constraints.
+Setup (fast path). Pick a template ("Idea stress test", "Technical plan", "Decision memo") or start blank. Defaults are sensible so a session can start in under a minute.
+Setup (full control). Add any number of participants, each with model, optional role/instructions, tools, skills, temperature and budget. Arrange phases on a simple timeline editor.
+Cost preview. Estimated tokens and cost range, with a hard cap.
+Live session. A threaded view of messages streaming in, grouped by phase. Each message shows agent, model, tools used, and what it responds to. Users can pause, inject a comment, mute or add a participant, force another round, or skip to synthesis.
+Result. A structured output in the chosen format, with an "explain this" view that traces any claim to its source messages, plus a dissent/open-questions section.
+Iterate. Fork a session, change the protocol or models, re-run only later phases, compare two runs.
+4. Main features
+Any number of participants; same model may appear multiple times with different instructions.
+Roles are optional free text or reusable presets, never required.
+Phase-based protocols with visibility rules, turn policies and stop conditions.
+Moderator/synthesizer as an ordinary participant, optional and swappable.
+Tools and skills per participant (see section 7).
+Output formats: report, recommendation, strategy, product brief, technical plan, research summary, decision matrix, ranked idea list, custom template.
+Export: Markdown, PDF, JSON, and copy-to-clipboard.
+Session history, search, fork, diff between runs.
+Templates library and shareable protocol files.
+Budget, rate-limit and failure handling (retries, fallback model).
+Human-in-the-loop controls at any point.
+5. Model and provider architecture
+Principle: the orchestrator talks to one internal interface. Providers are adapters.
+
+interface ModelProvider {
+  id: string;                       // "openrouter", "ollama-local", "openai-compat-1"
+  kind: "openai_compat" | "anthropic" | "google" | "ollama" | "custom";
+  baseUrl: string;
+  auth: { type: "api_key" | "none" | "oauth"; secretRef?: string };
+  capabilities: Capabilities;       // discovered or user-declared
+  listModels(): Promise<ModelInfo[]>;
+  stream(req: ChatRequest): AsyncIterable<ChatChunk>;
+}
+
+interface Capabilities {
+  toolCalling: boolean;
+  jsonMode: boolean;
+  vision: boolean;
+  reasoning: boolean;
+  maxContext: number;
+  streaming: boolean;
+}
+Adapters, in priority order
+
+OpenAI-compatible (chat completions). This one adapter covers OpenAI, OpenRouter, Ollama's /v1 endpoint, LM Studio, vLLM, llama.cpp server, Groq-style hosts and many gateways.
+Anthropic native and Google native, for features the compatible layer loses (native tool use, thinking, caching).
+Ollama native, for model management and pulls.
+"CLI/agent-style" adapter for OpenCode-style access: wrap a local agent process or server as a participant. Treat its API surface as unstable and isolate it behind the adapter.
+Key rules
+
+Capability negotiation: if a model lacks tool calling, the orchestrator emulates it through a structured-output prompt or marks tools as unavailable for that participant.
+Normalization: one message format, one usage/cost format, one error taxonomy.
+Fallbacks: per-participant fallback model when a provider is rate-limited or down (important for free tiers).
+Model catalog: cached list with context size, price, tool support, and a "free/local/paid" tag.
+6. Agent communication and brainstorming workflow
+Shared model: the session blackboard
+Agents do not message each other directly. They read from and write to a session transcript (the blackboard). The orchestrator decides, per phase, what each agent is allowed to see. This makes visibility rules, replay and provenance simple.
+
+Protocol schema
+protocol:
+  name: "Diverge, review, converge"
+  phases:
+    - id: draft
+      participants: all
+      turn: parallel
+      visibility: blind            # nobody sees others' drafts
+      prompt: "Propose your best ideas. Include assumptions and evidence."
+      output: idea_list
+    - id: review
+      participants: all
+      turn: parallel
+      visibility: full             # everyone sees all drafts
+      prompt: "Critique each idea. Compare, merge, or extend."
+      target: {type: messages, from: draft, exclude_self: false}
+    - id: revise
+      participants: all
+      turn: parallel
+      visibility: own_plus_critiques
+      prompt: "Revise your position given the critiques."
+    - id: synthesize
+      participants: [synth]
+      turn: single
+      visibility: full
+      output_format: decision_memo
+  stop:
+    max_rounds: 6
+    max_cost_usd: 2.00
+    convergence: {enabled: true, threshold: 0.8}
+Building blocks (users mix these freely)
+Setting	Options
+Turn policy	parallel, round-robin, moderator-directed, free-for-all with a cap, pairwise
+Visibility	blind, full, own + critiques, subgroup
+Interaction type	propose, critique, compare, merge, rebut, vote/rank, fact-check
+Stop condition	round cap, budget cap, convergence check, user stop, moderator decision
+Scoring	none, ranking, weighted criteria, confidence votes
+Preset protocols (starting points, not the product)
+Diverge-review-converge, structured debate, red team vs blue team, Delphi-style anonymous rounds, moderator-led panel, round-robin build-on, pre-mortem.
+
+Quality safeguards
+Independent first pass (blind draft) to reduce herding and sycophancy.
+Devil's advocate slot that any participant can be assigned.
+Claim extraction: after each phase, extract claims, assumptions and disagreements into structured records so later phases and the final report work from those rather than long transcripts.
+Context compaction: rolling summaries plus claim tables, so many agents and long sessions do not overflow context windows.
+Convergence is not correctness. Show agreement level, but flag when models agree without evidence.
+7. Tool and skill access
+Tools are callable functions (web search, page fetch, code execution, file read, calculator, MCP server tools). Skills are reusable instruction and resource bundles (for example "market sizing method", "security review checklist") injected into a participant's context when relevant.
+
+interface ToolGrant {
+  toolId: string;
+  scope: "read" | "write" | "execute";
+  approval: "auto" | "ask_user" | "deny";
+  budget?: { maxCalls: number; maxTokens?: number };
+}
+interface Participant {
+  id: string;
+  label: string;                    // user-defined, free text
+  modelRef: { providerId: string; modelId: string };
+  instructions?: string;            // optional role/system prompt
+  skills: string[];
+  tools: ToolGrant[];
+  params: { temperature?: number; maxOutputTokens?: number };
+  fallbackModelRef?: { providerId: string; modelId: string };
+  budget?: { maxUsd?: number; maxTokens?: number };
+}
+Design points
+
+MCP as the primary tool interface, so users can plug in existing tool servers.
+Shared tool results: results are stored once and referenced, so five agents do not each re-fetch the same page. Users choose whether results are shared or private per phase.
+Evidence objects: tool output becomes an Evidence record (source, timestamp, snippet) that claims can cite.
+Per-participant grants: a local model with no tool support can still participate as a reasoner.
+Approval modes for anything with side effects.
+8. Data structures
+interface Session {
+  id: string;
+  ownerId: string;
+  title: string;
+  prompt: string;
+  attachments: Attachment[];
+  participants: Participant[];
+  protocol: Protocol;
+  status: "draft" | "running" | "paused" | "completed" | "failed";
+  budget: { maxUsd?: number; maxTokens?: number };
+  usage: { tokensIn: number; tokensOut: number; costUsd: number };
+  parentSessionId?: string;         // for forks
+  createdAt: string; updatedAt: string;
+}
+
+interface Message {
+  id: string;
+  sessionId: string;
+  phaseId: string;
+  round: number;
+  participantId: string | "user" | "system";
+  content: string;
+  replyTo?: string[];               // message ids it responds to
+  visibleTo: string[] | "all";
+  toolCalls?: ToolCall[];
+  evidenceIds?: string[];
+  model: { providerId: string; modelId: string };
+  usage: { tokensIn: number; tokensOut: number; costUsd: number };
+  latencyMs: number;
+  createdAt: string;
+}
+
+interface Claim {                   // extracted after each phase
+  id: string; text: string;
+  authorIds: string[];
+  supportMessageIds: string[];
+  evidenceIds: string[];
+  stance: "proposed" | "supported" | "challenged" | "refuted" | "merged";
+  confidence?: number;
+}
+
+interface Result {
+  id: string; sessionId: string;
+  format: string;                   // "decision_memo", "technical_plan", ...
+  sections: { title: string; body: string; claimIds: string[] }[];
+  recommendation?: string;
+  dissent: { claimId: string; who: string[]; summary: string }[];
+  openQuestions: string[];
+  scores?: Record<string, number>;
+  version: number;
+}
+Storage: relational (Postgres) for sessions/messages/claims/results, object storage for attachments, an append-only event log per session for replay.
+
+9. Free and paid model support
+Free routes
+
+Local: Ollama, LM Studio, llama.cpp, vLLM. Free per token, limited by hardware.
+Free tiers and free OpenRouter models: rate-limited and can change or disappear, so treat as unreliable.
+OpenCode-style/agent CLIs: use whatever access the user already has.
+Paid routes: OpenAI, Anthropic, Google, OpenRouter credits, any OpenAI-compatible host.
+
+Product features that make mixing practical
+
+Tag each model free, local, or paid, and show estimated cost per phase.
+"Tiered" presets: cheap/local models for drafting, a stronger model only for synthesis.
+Automatic fallback and queueing when free endpoints rate-limit.
+Concurrency limits per provider (local hardware handles few parallel requests).
+Honest labeling: weak models produce weak critiques, so show model capability hints.
+10. MVP scope
+Goal: prove that a configurable multi-model session with a traceable result beats pasting one prompt into several chat tabs.
+
+In
+
+Web app, single user, BYOK.
+Providers: OpenAI-compatible (covers OpenRouter, Ollama /v1, local servers) plus Anthropic native.
+Any number of participants with model, label, optional instructions.
+Protocol editor with 3 phase types (draft, review, synthesize), parallel and round-robin turns, blind/full visibility, round and cost caps.
+3 to 4 preset protocols and 4 output formats (report, recommendation, technical plan, decision memo).
+Tools: web search and page fetch only, shared results.
+Streaming transcript view, pause/inject/stop.
+Result with source-message links and a dissent section.
+Markdown export, session history, fork.
+Out (deliberately) Team collaboration, marketplace, native mobile, MCP marketplace, code execution, advanced convergence detection, billing.
+
+Success metrics: sessions completed, share of results exported, repeat use within 7 days, cost per session, user-rated usefulness versus a single-model answer.
+
+11. Future features
+Team workspaces, comments, shared protocols and templates library.
+Full MCP support and a skills marketplace.
+Code execution sandbox, file-system agents, repo-aware technical planning.
+Visual protocol builder (graph editor) and canvas view of ideas and claims.
+Evaluation mode: run the same prompt across protocols/models and compare results.
+Human participants in the loop as peers.
+Persistent project memory across sessions.
+Scheduled or triggered sessions and API/CLI/webhooks.
+Local desktop app with bundled Ollama management.
+Integrations: Notion, GitHub, Slack, Google Drive.
+12. Technical architecture
+Client (Next.js/React)
+   │  SSE / WebSocket stream
+API layer (REST + streaming)
+   │
+Orchestrator  ── Protocol engine ── Visibility/context builder
+   │                 │
+   │            Claim extractor + summarizer
+   ├── Provider adapter layer ──► OpenAI-compat | Anthropic | Google | Ollama
+   ├── Tool runtime (MCP client, sandboxed) ──► search, fetch, files, code
+   ├── Job queue + workers (durable, resumable)
+   └── Storage: Postgres, object store, event log, encrypted secrets
+Decisions
+
+Stack: TypeScript end to end (Next.js frontend, Node API/workers). A queue such as BullMQ/Redis or a Postgres-backed queue for durable jobs.
+Durable execution: sessions must survive crashes and browser closes. Every step is an event; the engine resumes from the log.
+Parallelism: phase fan-out with per-provider concurrency limits and backoff.
+Context builder: assembles each agent's prompt from the protocol's visibility rules plus claim tables and compacted history.
+Local model reachability: offer (a) Docker/self-host, (b) a small local bridge/desktop agent that relays requests, or (c) browser-direct calls to localhost where CORS allows. Cloud-only mode cannot reach a user's local Ollama.
+Observability: per-call tracing, cost and latency metrics, replayable sessions.
+13. Security and privacy
+Threats and mitigations
+
+API keys: encrypt at rest (KMS/envelope), never log, never send to the client after saving. Offer local-only key storage in self-host mode.
+Prompt injection via tools: web pages and files can carry instructions. Treat all tool output as untrusted data, delimit it, strip instructions where possible, and never let tool output change protocol or permissions.
+Agent-to-agent injection: one compromised or manipulated agent's message can steer others. Keep tool grants per participant, keep the orchestrator authoritative, and require approval for side-effect tools.
+Sandboxing: code execution and file tools run isolated with no network by default.
+Data exposure to many providers: a session sends your prompt and attachments to every chosen provider. Show a clear per-participant "data goes to X" indicator, allow local-only sessions, and let users mark attachments as "local models only".
+Retention: user-controlled deletion, optional no-store mode, export everything.
+Cost abuse: hard budget caps, rate limits, per-key spend limits.
+Compliance basics: GDPR-style export/delete, clear subprocessor list (the model providers), audit log for teams.
+Shared links: private by default, redact secrets and hidden system prompts on share.
+14. Pricing possibilities
+Indicative only, to be validated with users.
+
+Tier	Model	Notes
+Open core / self-host	Free	Docker, BYOK, local models. Builds trust and community.
+Cloud Free	Free	BYOK, limited saved sessions, basic protocols.
+Pro	~$12 to $25/month	BYOK, unlimited history, full protocol editor, exports, templates, priority features.
+Pro + credits	Subscription + pass-through usage	Hosted model access at cost plus a margin, no key setup.
+Team	Per seat (~$20 to $40)	Shared workspaces, shared protocols, SSO, audit log.
+Enterprise	Custom	Self-host support, private deployments, compliance.
+Notes: BYOK keeps your margins healthy and your risk low. Reselling model access adds billing, abuse and margin management. Competing tools lean on BYOK or per-seat pricing, so free BYOK plus paid convenience is a familiar pattern.
+
+15. Risks and limitations
+Crowded category. Several debate/council tools exist. Differentiation must be visible in the first session (protocol control, tools, provenance), not just claimed.
+Debate is not always better. Multi-agent debate helps most on judgment and tradeoff questions and adds little on simple factual ones. Guide users toward good use cases and offer a cheap single-model path.
+Groupthink and sycophancy. Models tend to agree with each other. Mitigate with blind first rounds, adversarial slots and model diversity, but it will not disappear.
+Cost and latency. N agents × R rounds multiplies tokens fast. Caps and previews are mandatory, not optional.
+Free-tier fragility. Free models change, throttle and vanish. Free-first must degrade gracefully.
+Weak participants. Small local models can add noise. Surface capability hints and let users weight or drop participants.
+Hallucinated consensus. Agreement can be confidently wrong. Provenance and evidence links help, but users still need to verify.
+Provider API drift and ToS. Adapters need maintenance. Check each provider's terms on multi-model orchestration and on automated access.
+OpenCode-style integration instability. Unofficial or fast-moving interfaces can break. Keep them isolated and optional.
+Scope creep. Tools, skills, protocols and teams can each become a product. Ship the narrow MVP first.
+16. Naming: ThinkPit
+Decision: ThinkPit. The working title "Brainstormers" was dropped because brainstormer.ai and brainstormer.chat are live in the same space, and GitHub already has projects with the name.
+
+Why ThinkPit works: short, easy to say, and "pit" reads as an arena where ideas get tested against each other. It avoids the crowded words (brainstorm, council, roundtable, debate).
+
+Rejected: Convene (a near-identical multi-model "room" product already launched), Concord (established contract-management company), Caucus (YC-backed AI CRM for government).
+
+Availability findings (searches and a Spaceship check, not a legal search)
+
+No product named ThinkPit found; the GitHub name is empty.
+thinkpit.com has been registered since 2006, so check what is on it.
+Available at check time: .ai ($80/yr), .io ($32, renews $52), .co ($5, renews ~$31), .org, .net. Compare renewal prices, not just first-year promos.
+Nearest neighbours to watch: ThinkPal (multi-model chat app) and Think (Saudi AI infrastructure company). "Think + noun" is a common pattern, so trademark distinctiveness is moderate.
+Naming to-do: buy thinkpit.ai (or .co to start), create the thinkpit org on GitHub, claim npm and X handles, and run a USPTO/EUIPO search in software classes 9 and 42.
+
+Tagline ideas: "Put your models in the pit." / "Ideas get sharper when they argue."
+
+Suggested next steps
+Run 5 to 8 real sessions manually with a script before building UI, to validate protocols and result quality.
+Register the ThinkPit domain and handles.
+Build the orchestrator + adapter core first (CLI or minimal UI), then the protocol editor and result view.

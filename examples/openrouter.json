@@ -1,0 +1,12 @@
+{
+  "topic": "A fictional library can trial two extra weekend hours. Compare Saturday and Sunday, challenge assumptions, and propose a measurable experiment.",
+  "ask_questions": true,
+  "limits": {"max_turns": 6, "max_tokens": 100000, "max_output_tokens": 1024},
+  "providers": [
+    {"id": "openrouter", "kind": "openai_compat", "base_url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY"}
+  ],
+  "participants": [
+    {"id": "access", "name": "Access", "provider_id": "openrouter", "model": "qwen/qwen3.8-27b:free", "instructions": "Focus on community access and respond to specific prior points."},
+    {"id": "staffing", "name": "Staffing", "provider_id": "openrouter", "model": "liquid/lfm-2.5-2.6b:free", "instructions": "Focus on staffing and a measurable trial; challenge assumptions."}
+  ]
+}

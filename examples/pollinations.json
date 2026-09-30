@@ -1,0 +1,12 @@
+{
+  "topic": "A fictional neighborhood library has six volunteers and can afford two extra opening hours per weekend. Should it extend Saturday hours, Sunday hours, or run a monthly evening event? Discuss access, staffing, and a small experiment. Use no more than 100 words per turn.",
+  "ask_questions": false,
+  "limits": {"max_turns": 4, "max_tokens": 60000, "max_output_tokens": 1024},
+  "providers": [
+    {"id": "pollinations", "kind": "openai_compat", "base_url": "https://text.pollinations.ai", "endpoint_path": "/openai"}
+  ],
+  "participants": [
+    {"id": "access", "name": "Access", "provider_id": "pollinations", "model": "openai-fast", "instructions": "Focus on accessibility and community needs. Respond to the other participant's specific points."},
+    {"id": "staffing", "name": "Staffing", "provider_id": "pollinations", "model": "openai-fast", "instructions": "Focus on volunteer capacity and a measurable trial. Challenge impractical suggestions and explain why."}
+  ]
+}
