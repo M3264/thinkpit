@@ -17,7 +17,7 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /thinkpit ./cmd/thinkpit
 
 FROM alpine:3.23
-RUN apk add --no-cache ca-certificates && adduser -D -u 10001 thinkpit
+RUN apk add --no-cache ca-certificates poppler-utils && adduser -D -u 10001 thinkpit
 WORKDIR /app
 USER thinkpit
 COPY --from=build /thinkpit /usr/local/bin/thinkpit

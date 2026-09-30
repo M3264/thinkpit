@@ -71,3 +71,17 @@ Events have monotonic database IDs, a named `event`, and a JSON `data` payload. 
 The engine states are `ready`, `running`, `waiting_for_user`, `paused`, `stopped`, and `failed`. Ready with reason `idle` means the discussion has completed a quiet round. Failed turns retain an incomplete reply and a safe error in their attempt record.
 
 HTTP 400 means malformed input, 401 means authentication is required, 403 means a rejected origin, 404 means a missing record, 409 means an invalid state transition, and 500 means a storage operation failed. Upstream provider failures appear in conversation state rather than in the initiating HTTP response because generation happens in the background.
+
+## Model discovery and saved setups
+
+`GET /api/providers/{id}/models` reads the saved provider's catalog using its server-side key. `GET /api/catalog/openrouter` browses OpenRouter's public catalog without saving a provider. Results contain IDs, names, descriptions, context lengths, advertised capabilities, and optional `free` status. Unknown pricing stays unknown; catalog availability does not imply that generation needs no key. Catalogs are bounded to 5,000 records.
+
+`GET /api/setups` lists saved participant configurations. `PUT /api/setups/{id}` saves `name`, `participants`, `ask_questions`, and `limits`. `DELETE /api/setups/{id}` removes one. Setups contain no provider credentials or conversation context.
+
+## Files and web evidence
+
+`POST /api/attachments` accepts multipart field `file`, up to 2 MB: UTF-8 text, Markdown, CSV, TSV, JSON, logs, or text-based PDFs. PDF extraction needs `pdftotext`, included in the app image. Scanned PDFs need text extraction elsewhere.
+
+`POST /api/search` takes JSON `query` and returns search results and partial-engine warnings. `POST /api/sources` takes JSON `url`, fetches a public HTTP(S) page, and extracts readable text. Private network addresses and redirects to them are rejected.
+
+Uploads and fetched pages return `evidence` and a signed `token`, valid for 24 hours. Send those strings in `context_tokens` when creating a conversation or submitting a `message` control. Each item is limited to a 16 KB excerpt; conversations hold at most 20 items and 96 KB of context. Evidence persists with the conversation, appears in snapshots and exports, and is deleted with it. Context is marked as untrusted reference material in model prompts. Search only runs when requested by the human; models do not autonomously browse or run tools.

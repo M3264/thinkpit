@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,7 +34,7 @@ func database(t *testing.T) *storage.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.Pool.Exec(context.Background(), "TRUNCATE events, conversations, providers RESTART IDENTITY CASCADE")
+	_, err = s.Pool.Exec(context.Background(), "TRUNCATE events, conversations, providers, setups RESTART IDENTITY CASCADE")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,5 +385,74 @@ func TestHTTPAuthSecretsAndEventReplay(t *testing.T) {
 	events, err = s.Events(context.Background(), c.ID, 0)
 	if err != nil || len(events) != 0 {
 		t.Fatal("delete left event data")
+	}
+}
+
+func TestWorkspaceDiscoverySavedSetupsAndEvidencePersistence(t *testing.T) {
+	s := database(t)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" || r.Header.Get("Authorization") != "Bearer sensitive-test-key" {
+			t.Error("catalog provider auth mismatch")
+		}
+		fmt.Fprint(w, `{"data":[{"id":"test","name":"Test model","pricing":{"prompt":"0","completion":"0"}}]}`)
+	}))
+	defer fake.Close()
+	saveFake(t, s, fake.URL, "one", "openai_compat")
+	saveFake(t, s, fake.URL, "two", "openai_compat")
+	server := &Server{Store: s, Username: "admin", Password: "long-test-password"}
+	api := httptest.NewServer(server.Handler())
+	defer api.Close()
+	call := func(method, path, body string) *http.Response {
+		req, _ := http.NewRequest(method, api.URL+path, strings.NewReader(body))
+		req.SetBasicAuth("admin", "long-test-password")
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	resp := call("GET", "/api/providers/one/models", "")
+	var catalog provider.Catalog
+	err := json.NewDecoder(resp.Body).Decode(&catalog)
+	resp.Body.Close()
+	if err != nil || len(catalog.Models) != 1 || catalog.Models[0].Free == nil || !*catalog.Models[0].Free {
+		t.Fatal("discovery not exposed", err)
+	}
+	resp = call("PUT", "/api/setups/team", `{"name":"Fictional team","participants":[{"id":"a","provider_id":"one","model":"test"}],"limits":{"max_turns":8,"max_tokens":100000,"max_output_tokens":512},"ask_questions":true}`)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatal("setup save failed")
+	}
+	resp = call("GET", "/api/setups", "")
+	var setups []storage.Setup
+	err = json.NewDecoder(resp.Body).Decode(&setups)
+	resp.Body.Close()
+	if err != nil || len(setups) != 1 || setups[0].Name != "Fictional team" {
+		t.Fatal("setup did not persist")
+	}
+	prepared := server.prepare(conversation.Evidence{ID: "file-check", Kind: "file", Name: "notes.md", Text: "Fictional staffing constraints."})
+	body, _ := json.Marshal(map[string]any{"topic": "Fictional context check", "participants": setups[0].Participants, "context_tokens": []string{prepared.Token}})
+	resp = call("POST", "/api/conversations", string(body))
+	var c conversation.Conversation
+	err = json.NewDecoder(resp.Body).Decode(&c)
+	resp.Body.Close()
+	if resp.StatusCode != 201 || err != nil || len(c.Context) != 1 {
+		t.Fatal("context creation failed", err)
+	}
+	persisted, err := s.Get(context.Background(), c.ID)
+	if err != nil || persisted.Context[0].Text != "Fictional staffing constraints." {
+		t.Fatal("context snapshot not durable")
+	}
+	resp = call("GET", "/api/conversations/"+c.ID+"/export", "")
+	data, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(data), "notes.md") {
+		t.Fatal("context absent from export")
+	}
+	resp = call("DELETE", "/api/setups/team", "")
+	resp.Body.Close()
+	if resp.StatusCode != 204 {
+		t.Fatal("setup delete failed")
 	}
 }

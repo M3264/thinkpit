@@ -23,12 +23,23 @@ import {
   MessageCircle,
   LoaderCircle,
   ArrowLeft,
+  ArrowUpRight,
+  Shapes,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, post, stream, ApiError } from "./api";
-import type { Conversation, Participant, Provider } from "./types";
+import type {
+  Conversation,
+  Participant,
+  Provider,
+  Model,
+  PreparedEvidence,
+  Setup,
+} from "./types";
 import { Textarea } from "./components/Textarea";
+import { ContextInput } from "./components/ContextInput";
+import { ModelLibrary } from "./components/ModelLibrary";
 import { Dialog } from "./components/Dialog";
 const stateName: Record<Conversation["state"], string> = {
   ready: "Ready",
@@ -92,10 +103,15 @@ export default function App() {
     [menu, setMenu] = useState(false),
     [connected, setConnected] = useState(true),
     [remove, setRemove] = useState(false),
-    [stopping, setStopping] = useState(false);
+    [stopping, setStopping] = useState(false),
+    [draftParticipants, setDraftParticipants] = useState<Participant[]>([]),
+    [draftContext, setDraftContext] = useState<PreparedEvidence[]>([]),
+    [sourcesOpen, setSourcesOpen] = useState(false),
+    [historyQuery, setHistoryQuery] = useState("");
   const params = new URLSearchParams(url),
     selected = params.get("conversation"),
     settings = params.get("view") === "providers",
+    library = params.get("view") === "models",
     currentID = current?.id,
     last = useRef(""),
     scrollRef = useRef<HTMLDivElement>(null),
@@ -124,7 +140,7 @@ export default function App() {
     setCurrent(null);
     last.current = "";
     follow.current = true;
-    if (!auth || !selected || settings) return;
+    if (!auth || !selected || settings || library) return;
     let live = true;
     setLoading(true);
     api<Conversation>(`/conversations/${encodeURIComponent(selected)}`)
@@ -150,7 +166,7 @@ export default function App() {
     return () => {
       live = false;
     };
-  }, [auth, selected, settings]);
+  }, [auth, selected, settings, library]);
   useEffect(() => {
     if (!auth || !currentID) return;
     const controller = new AbortController();
@@ -246,34 +262,84 @@ export default function App() {
       await refresh().catch(() => {});
     });
   }
+  async function chooseModel(provider: Provider, model: Model) {
+    if (!providers.some((p) => p.id === provider.id)) {
+      await api(`/providers/${provider.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: "OpenRouter",
+          kind: provider.kind,
+          base_url: provider.base_url,
+        }),
+      });
+      await refresh();
+    }
+
+    setDraftParticipants((old) =>
+      old.length >= 64
+        ? old
+        : [
+            ...old,
+            {
+              id: id(),
+              name: model.name.slice(0,128),
+              provider_id: provider.id,
+              model: model.id,
+              instructions: "",
+            },
+          ],
+    );
+  }
   const sidebar = (
     <>
       <Link href="/" className="brand" onNavigate={() => setMenu(false)}>
-        <MessageCircle aria-hidden="true" size={24} strokeWidth={1.7} />
+        <img className="brand-mark" src="/brand/thinkpit-mark.svg" alt="" width="38" height="30" />
         <span translate="no">ThinkPit</span>
       </Link>
       <Link href="/" className="new-chat" onNavigate={() => setMenu(false)}>
         <Plus aria-hidden="true" size={18} />
         New conversation
       </Link>
+      <Link
+        href="/?view=models"
+        className={`models-nav ${library ? "selected" : ""}`}
+        onNavigate={() => setMenu(false)}
+      >
+        <Shapes aria-hidden="true" size={18} />
+        Model library
+        <ArrowUpRight aria-hidden="true" size={15} />
+      </Link>
       <nav aria-label="Conversation history" className="history">
         <h2>Conversations</h2>
+        <input
+          className="history-search"
+          name="history-search"
+          autoComplete="off"
+          aria-label="Search conversations"
+          placeholder="Search conversations…"
+          value={historyQuery}
+          onChange={(e) => setHistoryQuery(e.target.value)}
+        />
         {conversations.length === 0 ? (
           <p className="history-empty">Your conversations will appear here.</p>
         ) : (
-          conversations.map((c) => (
-            <Link
-              key={c.id}
-              href={`/?conversation=${c.id}`}
-              className={`history-link ${selected === c.id ? "selected" : ""}`}
-              onNavigate={() => setMenu(false)}
-            >
-              <span>{c.topic}</span>
-              {c.state === "running" && (
-                <span className="live-dot" aria-label="Running" />
-              )}
-            </Link>
-          ))
+          conversations
+            .filter((c) =>
+              c.topic.toLowerCase().includes(historyQuery.toLowerCase()),
+            )
+            .map((c) => (
+              <Link
+                key={c.id}
+                href={`/?conversation=${c.id}`}
+                className={`history-link ${selected === c.id ? "selected" : ""}`}
+                onNavigate={() => setMenu(false)}
+              >
+                <span>{c.topic}</span>
+                {c.state === "running" && (
+                  <span className="live-dot" aria-label="Running" />
+                )}
+              </Link>
+            ))
         )}
       </nav>
       <footer className="rail-footer">
@@ -291,7 +357,7 @@ export default function App() {
               await post("/logout", {});
               try {
                 for (const key of Object.keys(sessionStorage))
-                  if (key.startsWith("thinkpit:draft:"))
+                  if (key.startsWith("thinkpit:"))
                     sessionStorage.removeItem(key);
               } catch {
                 /* Storage may be disabled. */
@@ -338,11 +404,13 @@ export default function App() {
             <PanelLeft aria-hidden="true" size={20} />
           </button>
           <div className="breadcrumb">
-            {settings
-              ? "Providers"
-              : current
-                ? "Conversation"
-                : "New conversation"}
+            {library
+              ? "Model library"
+              : settings
+                ? "Providers"
+                : current
+                  ? "Conversation"
+                  : "New conversation"}
           </div>
           {current && (
             <div className="top-actions">
@@ -386,7 +454,11 @@ export default function App() {
         <main
           id="main"
           className={
-            settings ? "settings-main" : current ? "chat-main" : "new-main"
+            settings || library
+              ? "settings-main"
+              : current
+                ? "chat-main"
+                : "new-main"
           }
         >
           {error && (
@@ -401,7 +473,18 @@ export default function App() {
               </button>
             </div>
           )}
-          {settings ? (
+          {library ? (
+            <div className="standalone-library">
+              <ModelLibrary providers={providers} onChoose={chooseModel} />
+              <Link className="button primary" href="/">
+                Build conversation
+                {draftParticipants.length > 0
+                  ? ` (${draftParticipants.length})`
+                  : ""}
+                <ArrowUpRight aria-hidden="true" size={16} />
+              </Link>
+            </div>
+          ) : settings ? (
             <Providers providers={providers} refresh={refresh} />
           ) : loading ? (
             <div className="loading-screen">
@@ -411,12 +494,20 @@ export default function App() {
           ) : !current ? (
             <NewConversation
               providers={providers}
+              context={draftContext}
+              setContext={setDraftContext}
+              participants={draftParticipants}
+              setParticipants={setDraftParticipants}
+              chooseModel={chooseModel}
               create={async (body) => {
                 await run(async () => {
                   const c = await post<Conversation>("/conversations", body);
                   history.pushState({}, "", `/?conversation=${c.id}`);
                   setURL(location.search);
                   setConversations((old) => [c, ...old]);
+                  setDraftParticipants([]);
+                  setDraftContext([]);
+                  sessionStorage.removeItem("thinkpit:topic");
                   await post(`/conversations/${c.id}/controls`, {
                     action: "start",
                   });
@@ -428,6 +519,22 @@ export default function App() {
             <>
               <div className="conversation-heading">
                 <h1>{current.topic}</h1>
+                <div className="run-info">
+                  <span>
+                    {current.attempts.length}/{current.limits.max_turns} turns
+                  </span>
+                  <span>
+                    {new Intl.NumberFormat().format(current.charged_tokens)} /{" "}
+                    {new Intl.NumberFormat().format(current.limits.max_tokens)}{" "}
+                    budget units
+                  </span>
+                  <button
+                    className="text-button"
+                    onClick={() => setSourcesOpen(true)}
+                  >
+                    Sources ({current.context?.length || 0})
+                  </button>
+                </div>
                 <div className="participant-strip">
                   {current.participants.map((p, i) => (
                     <span key={p.id}>
@@ -597,7 +704,9 @@ export default function App() {
                   conversationID={current.id}
                   busy={busy}
                   stopped={current.state === "stopped"}
-                  onSend={async (text) => control("message", { text })}
+                  onSend={async (text, tokens) =>
+                    control("message", { text, context_tokens: tokens })
+                  }
                 />
                 <p className="composer-hint">
                   {current.state === "running"
@@ -611,6 +720,41 @@ export default function App() {
           )}
         </main>
       </div>
+      {sourcesOpen && current && (
+        <Dialog
+          title="Conversation sources"
+          close={() => setSourcesOpen(false)}
+        >
+          <div className="context-view">
+            {current.context?.length ? (
+              current.context.map((source) => (
+                <details key={source.id}>
+                  <summary>
+                    {source.name}
+                    {source.truncated ? " · excerpt" : ""}
+                  </summary>
+                  {source.url && (
+                    <a
+                      href={source.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {source.url}
+                    </a>
+                  )}
+                  <small>Evidence {source.id}</small>
+                  <pre>{source.text}</pre>
+                </details>
+              ))
+            ) : (
+              <p>
+                No sources yet. Attach a file or add a web page beside the
+                message field.
+              </p>
+            )}
+          </div>
+        </Dialog>
+      )}
       {stopping && current && (
         <Dialog
           title="Stop this conversation?"
@@ -682,7 +826,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
   return (
     <main className="login">
       <div className="login-wordmark">
-        <MessageCircle aria-hidden="true" size={29} strokeWidth={1.6} />
+        <img className="brand-mark" src="/brand/thinkpit-mark.svg" alt="" width="46" height="35" />
         <span translate="no">ThinkPit</span>
       </div>
       <form
@@ -748,7 +892,7 @@ function Composer({
   stopped,
 }: {
   conversationID: string;
-  onSend: (text: string) => Promise<boolean>;
+  onSend: (text: string, tokens: string[]) => Promise<boolean>;
   busy: boolean;
   stopped: boolean;
 }) {
@@ -775,56 +919,118 @@ function Composer({
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [draftKey, text]);
+  const [context, setContext] = useState<PreparedEvidence[]>([]);
+  const [contextBusy, setContextBusy] = useState(false);
   async function submit(e?: FormEvent) {
     e?.preventDefault();
-    if (!text.trim() || busy || stopped) return;
-    if (await onSend(text)) setText("");
+    if ((!text.trim() && !context.length) || busy || contextBusy || stopped) return;
+    if (
+      await onSend(
+        text || "Please consider the attached context.",
+        context.map((x) => x.token),
+      )
+    ) {
+      setText("");
+      setContext([]);
+    }
   }
   return (
-    <form className="composer" onSubmit={submit}>
-      <Textarea
-        name="message"
-        aria-label="Your message"
-        placeholder="Add a thought, ask a question…"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        disabled={stopped}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-        rows={2}
-      />
-      <button
-        className="send-button"
-        aria-label="Send message"
-        disabled={busy || stopped || !text.trim()}
-      >
-        {busy ? (
-          <LoaderCircle aria-hidden="true" className="spin" size={18} />
-        ) : (
-          <ArrowUp aria-hidden="true" size={20} />
-        )}
-      </button>
-    </form>
+    <div>
+      <ContextInput items={context} onChange={setContext} onBusy={setContextBusy} />
+      <form className="composer" onSubmit={submit}>
+        <Textarea
+          name="message"
+          aria-label="Your message"
+          placeholder="Add a thought, ask a question…"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          disabled={stopped}
+          onKeyDown={(e) => {
+            if (
+              e.key === "Enter" &&
+              !e.shiftKey &&
+              !e.nativeEvent.isComposing
+            ) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          rows={2}
+        />
+        <button
+          className="send-button"
+          aria-label="Send message"
+          disabled={busy || contextBusy || stopped || (!text.trim() && !context.length)}
+        >
+          {busy ? (
+            <LoaderCircle aria-hidden="true" className="spin" size={18} />
+          ) : (
+            <ArrowUp aria-hidden="true" size={20} />
+          )}
+        </button>
+      </form>
+    </div>
   );
 }
 function NewConversation({
+  context,
+  setContext,
+  participants,
+  setParticipants,
+  chooseModel,
   providers,
   create,
   busy,
 }: {
   providers: Provider[];
+  context: PreparedEvidence[];
+  setContext: (context: PreparedEvidence[]) => void;
+  participants: Participant[];
+  setParticipants: React.Dispatch<React.SetStateAction<Participant[]>>;
+  chooseModel: (provider: Provider, model: Model) => void;
   create: (body: unknown) => Promise<void>;
   busy: boolean;
 }) {
-  const [topic, setTopic] = useState(""),
+  const [topic, setTopic] = useState(()=>{try{return sessionStorage.getItem("thinkpit:topic")||""}catch{return ""}}),
     [ask, setAsk] = useState(true),
-    [participants, setParticipants] = useState<Participant[]>([]),
     [error, setError] = useState(""),
-    [turns, setTurns] = useState(24);
+    [turns, setTurns] = useState(24),
+    [tokens, setTokens] = useState(150000),
+    [output, setOutput] = useState(1024),
+    [setups, setSetups] = useState<Setup[]>([]),
+    [setupName, setSetupName] = useState(""),
+    [setupNotice, setSetupNotice] = useState(""),
+    [contextBusy, setContextBusy] = useState(false);
+  useEffect(() => {
+    api<Setup[]>("/setups")
+      .then(setSetups)
+      .catch(() => {});
+  }, []);
+  useEffect(()=>{try{sessionStorage.setItem("thinkpit:topic",topic)}catch{};if(!topic.trim()&&!participants.length&&!context.length)return;const warn=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue=""};window.addEventListener("beforeunload",warn);return()=>window.removeEventListener("beforeunload",warn)},[topic,participants,context]);
+  async function saveSetup() {
+    setError("");
+    try {
+      const saved = await api<Setup>(`/setups/${id()}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: setupName,
+          participants,
+          ask_questions: ask,
+          limits: {
+            max_turns: turns,
+            max_tokens: tokens,
+            max_output_tokens: output,
+          },
+        }),
+      });
+      setSetups((old) => [saved, ...old]);
+      setSetupName("");
+      setSetupNotice("Setup saved.");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   function add() {
     const p = providers[0];
     if (!p) return;
@@ -845,211 +1051,353 @@ function NewConversation({
     );
   }
   return (
-    <div className="new-conversation">
-      <div className="welcome-mark" aria-hidden="true">
-        <MessageCircle aria-hidden="true" size={34} strokeWidth={1.2} />
-      </div>
-      <h1>What’s on your mind?</h1>
-      <p className="intro">A few perspectives. One conversation.</p>
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (!participants.length) {
-            setError("Add a participant to start.");
-            return;
-          }
-          setError("");
-          await create({
-            topic,
-            ask_questions: ask,
-            participants,
-            limits: {
-              max_turns: turns,
-              max_tokens: 150000,
-              max_output_tokens: 1024,
-            },
-          });
-        }}
-      >
-        <div className="topic-field">
-          <Textarea
-            aria-label="Conversation topic"
-            name="topic"
-            placeholder="An idea to explore, a decision to make…"
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            rows={3}
-            required
-            maxLength={32000}
-          />
-        </div>
-        <section
-          className="participants-setup"
-          aria-labelledby="participants-title"
+    <div className="setup-workbench">
+      <div className="new-conversation">
+        <h1>Put a few minds to work.</h1>
+        <p className="intro">
+          Pick your models. Bring a question. See where they take it.
+        </p>
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!participants.length) {
+              setError("Add a participant to start.");
+              return;
+            }
+            const missing=participants.find(p=>{const provider=providers.find(v=>v.id===p.provider_id);return provider&&!provider.has_key&&['api.openai.com','api.anthropic.com','openrouter.ai'].includes(new URL(provider.base_url).hostname)});
+            if(missing){setError(`Add an API key for ${providers.find(p=>p.id===missing.provider_id)?.name} in Providers before starting.`);return}
+            setError("");
+            await create({
+              topic,
+              context_tokens: context.map((x) => x.token),
+              ask_questions: ask,
+              participants,
+              limits: {
+                max_turns: turns,
+                max_tokens: tokens,
+                max_output_tokens: output,
+              },
+            });
+          }}
         >
-          <header>
-            <h2 id="participants-title">Who’s joining?</h2>
-            {providers.length > 0 && (
+          <div className="topic-field">
+            <Textarea
+              aria-label="Conversation topic"
+              name="topic"
+              placeholder="An idea to explore, a decision to make…"
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              rows={3}
+              required
+              maxLength={32000}
+            />
+          </div>
+          <ContextInput items={context} onChange={setContext} onBusy={setContextBusy} />
+          <div className="topic-starters" aria-label="Topic starters">
+            {[
+              "Pressure-test an idea",
+              "Compare my options",
+              "Explore a question",
+            ].map((label, i) => (
               <button
                 type="button"
-                className="text-button"
-                onClick={add}
-                disabled={participants.length >= 64}
+                key={label}
+                onClick={() =>
+                  setTopic(
+                    [
+                      "Help me pressure-test this idea: ",
+                      "Help me compare these options: ",
+                      "I’d like to explore this question: ",
+                    ][i],
+                  )
+                }
               >
-                <Plus aria-hidden="true" size={15} />
-                Add participant
+                {label}
+                <ArrowUpRight aria-hidden="true" size={14} />
               </button>
-            )}
-          </header>
-          {providers.length === 0 ? (
-            <div className="provider-empty">
-              <p>Connect a provider to invite your first model.</p>
-              <Link className="button secondary" href="/?view=providers">
-                Set up a provider <ArrowUp aria-hidden="true" size={15} />
-              </Link>
-            </div>
-          ) : participants.length === 0 ? (
-            <button className="participant-add" type="button" onClick={add}>
-              <Plus aria-hidden="true" size={20} />
-              <span>
-                Add your first participant
-                <small>You can use the same model more than once.</small>
-              </span>
-            </button>
-          ) : (
-            participants.map((p, index) => (
-              <div className="participant-editor" key={p.id}>
-                <div className="participant-fields">
-                  <Seal name={p.name || "P"} index={index} />
-                  <label className="name-field">
-                    <span className="sr-only">Participant name</span>
-                    <input
-                      aria-label={`Participant ${index + 1} name`}
-                      autoComplete="off"
-                      name={`name-${p.id}`}
-                      value={p.name}
-                      onChange={(e) => change(index, { name: e.target.value })}
-                      placeholder="Name…"
-                      maxLength={128}
+            ))}
+          </div>
+          {setups.length > 0 && (
+            <label className="saved-setups">
+              Use a saved setup
+              <select
+                name="saved-setup"
+                defaultValue=""
+                onChange={(e) => {
+                  const setup = setups.find((s) => s.id === e.target.value);
+                  if (setup) {
+                    setParticipants(
+                      setup.participants.map((p) => ({ ...p, id: id() })),
+                    );
+                    setAsk(setup.ask_questions);
+                    setTurns(setup.limits.max_turns);
+                    setTokens(setup.limits.max_tokens);
+                    setOutput(setup.limits.max_output_tokens);
+                    setSetupNotice(`Loaded ${setup.name}.`);
+                  }
+                }}
+              >
+                <option value="">Choose a setup…</option>
+                {setups.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <section
+            className="participants-setup"
+            aria-labelledby="participants-title"
+          >
+            <header>
+              <h2 id="participants-title">At the table</h2>
+              {providers.length > 0 && (
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={add}
+                  disabled={participants.length >= 64}
+                >
+                  <Plus aria-hidden="true" size={15} />
+                  Add participant
+                </button>
+              )}
+            </header>
+            {providers.length === 0 ? (
+              <div className="provider-empty">
+                <p>Connect a provider to invite your first model.</p>
+                <Link className="button secondary" href="/?view=providers">
+                  Set up a provider <ArrowUp aria-hidden="true" size={15} />
+                </Link>
+              </div>
+            ) : participants.length === 0 ? (
+              <button className="participant-add" type="button" onClick={add}>
+                <Plus aria-hidden="true" size={20} />
+                <span>
+                  Add your first participant
+                  <small>You can use the same model more than once.</small>
+                </span>
+              </button>
+            ) : (
+              participants.map((p, index) => (
+                <div className="participant-editor" key={p.id}>
+                  <div className="participant-fields">
+                    <Seal name={p.name || "P"} index={index} />
+                    <label className="name-field">
+                      <span className="sr-only">Participant name</span>
+                      <input
+                        aria-label={`Participant ${index + 1} name`}
+                        autoComplete="off"
+                        name={`name-${p.id}`}
+                        value={p.name}
+                        onChange={(e) =>
+                          change(index, { name: e.target.value })
+                        }
+                        placeholder="Name…"
+                        maxLength={128}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label={`Remove participant ${index + 1}`}
+                      onClick={() =>
+                        setParticipants((old) =>
+                          old.filter((x) => x.id !== p.id),
+                        )
+                      }
+                    >
+                      <X aria-hidden="true" size={17} />
+                    </button>
+                  </div>
+                  <div className="model-fields">
+                    <label>
+                      Provider
+                      <select
+                        value={p.provider_id}
+                        onChange={(e) => {
+                          const provider = providers.find(
+                            (x) => x.id === e.target.value,
+                          );
+                          change(index, {
+                            provider_id: e.target.value,
+                            model:
+                              provider?.id === "pollinations"
+                                ? "openai-fast"
+                                : "",
+                          });
+                        }}
+                      >
+                        {providers.map((provider) => (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.name || provider.id}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Model
+                      <input
+                        required
+                        name={`model-${p.id}`}
+                        autoComplete="off"
+                        spellCheck={false}
+                        placeholder="Model ID…"
+                        value={p.model}
+                        onChange={(e) =>
+                          change(index, { model: e.target.value })
+                        }
+                        maxLength={256}
+                      />
+                    </label>
+                  </div>
+                  <details>
+                    <summary>
+                      Instructions <span>optional</span>
+                      <ChevronDown aria-hidden="true" size={14} />
+                    </summary>
+                    <Textarea
+                      aria-label={`Instructions for participant ${index + 1}`}
+                      name={`instructions-${p.id}`}
+                      placeholder="A perspective or approach…"
+                      value={p.instructions}
+                      onChange={(e) =>
+                        change(index, { instructions: e.target.value })
+                      }
+                      maxLength={8000}
+                      rows={2}
                     />
-                  </label>
+                  </details>
+                </div>
+              ))
+            )}
+          </section>
+          <div className="setup-footer">
+            <label className="question-toggle">
+              <input
+                name="ask_questions"
+                type="checkbox"
+                checked={ask}
+                onChange={(e) => setAsk(e.target.checked)}
+              />
+              Ask me questions
+            </label>
+            <button
+              className="button primary"
+              disabled={busy || contextBusy || providers.length === 0}
+            >
+              {busy ? (
+                <LoaderCircle aria-hidden="true" className="spin" size={16} />
+              ) : (
+                <ArrowUp aria-hidden="true" size={17} />
+              )}{" "}
+              {busy ? "Starting…" : "Start conversation"}
+            </button>
+          </div>
+          {error && (
+            <p role="alert" className="field-error">
+              {error}
+            </p>
+          )}
+          <details className="limits-settings">
+            <summary>
+              Run settings
+              <ChevronDown aria-hidden="true" size={14} />
+            </summary>
+            <label>
+              Maximum turns
+              <input
+                name="max-turns"
+                type="number"
+                min={1}
+                max={1000}
+                value={turns}
+                onChange={(e) => setTurns(Number(e.target.value))}
+                required
+              />
+            </label>
+            <label>
+              Token budget
+              <input
+                name="token-budget"
+                type="number"
+                min={256}
+                max={10000000}
+                required
+                value={tokens}
+                onChange={(e) => setTokens(Number(e.target.value))}
+              />
+            </label>
+            <label>
+              Maximum output per reply
+              <input
+                name="reply-tokens"
+                type="number"
+                min={64}
+                max={8192}
+                required
+                value={output}
+                onChange={(e) => setOutput(Number(e.target.value))}
+              />
+            </label>
+          </details>
+          {setups.length > 0 && (
+            <details className="manage-setups">
+              <summary>Manage saved setups</summary>
+              {setups.map((setup) => (
+                <div key={setup.id}>
+                  <span>{setup.name}</span>
                   <button
                     type="button"
-                    className="icon-button"
-                    aria-label={`Remove participant ${index + 1}`}
-                    onClick={() =>
-                      setParticipants((old) => old.filter((x) => x.id !== p.id))
-                    }
+                    className="text-button"
+                    onClick={async () => {
+                      if (!window.confirm(`Delete ${setup.name}?`)) return;
+                      try {
+                        await api(`/setups/${setup.id}`, { method: "DELETE" });
+                        setSetups((old) =>
+                          old.filter((x) => x.id !== setup.id),
+                        );
+                      } catch (e) {
+                        setError((e as Error).message);
+                      }
+                    }}
                   >
-                    <X aria-hidden="true" size={17} />
+                    Delete<span className="sr-only"> {setup.name}</span>
                   </button>
                 </div>
-                <div className="model-fields">
-                  <label>
-                    Provider
-                    <select
-                      value={p.provider_id}
-                      onChange={(e) => {
-                        const provider = providers.find(
-                          (x) => x.id === e.target.value,
-                        );
-                        change(index, {
-                          provider_id: e.target.value,
-                          model:
-                            provider?.id === "pollinations"
-                              ? "openai-fast"
-                              : "",
-                        });
-                      }}
-                    >
-                      {providers.map((provider) => (
-                        <option key={provider.id} value={provider.id}>
-                          {provider.name || provider.id}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Model
-                    <input
-                      required
-                      name={`model-${p.id}`}
-                      autoComplete="off"
-                      spellCheck={false}
-                      placeholder="Model ID…"
-                      value={p.model}
-                      onChange={(e) => change(index, { model: e.target.value })}
-                      maxLength={256}
-                    />
-                  </label>
-                </div>
-                <details>
-                  <summary>
-                    Instructions <span>optional</span>
-                    <ChevronDown aria-hidden="true" size={14} />
-                  </summary>
-                  <Textarea
-                    aria-label={`Instructions for participant ${index + 1}`}
-                    name={`instructions-${p.id}`}
-                    placeholder="A perspective or approach…"
-                    value={p.instructions}
-                    onChange={(e) =>
-                      change(index, { instructions: e.target.value })
-                    }
-                    maxLength={8000}
-                    rows={2}
-                  />
-                </details>
-              </div>
-            ))
+              ))}
+            </details>
           )}
-        </section>
-        <div className="setup-footer">
-          <label className="question-toggle">
-            <input
-              name="ask_questions"
-              type="checkbox"
-              checked={ask}
-              onChange={(e) => setAsk(e.target.checked)}
-            />
-            Ask me questions
-          </label>
-          <button
-            className="button primary"
-            disabled={busy || providers.length === 0}
-          >
-            {busy ? (
-              <LoaderCircle aria-hidden="true" className="spin" size={16} />
-            ) : (
-              <ArrowUp aria-hidden="true" size={17} />
-            )}{" "}
-            {busy ? "Starting…" : "Start conversation"}
-          </button>
-        </div>
-        {error && (
-          <p role="alert" className="field-error">
-            {error}
+          {participants.length > 0 && (
+            <div className="save-setup">
+              <label>
+                Save these participants
+                <input
+                  name="setup-name"
+                  autoComplete="off"
+                  placeholder="Setup name…"
+                  value={setupName}
+                  maxLength={128}
+                  onChange={(e) => setSetupName(e.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className="button secondary"
+                disabled={!setupName.trim()}
+                onClick={saveSetup}
+              >
+                Save setup
+              </button>
+            </div>
+          )}
+          <p role="status" className="setup-notice">
+            {setupNotice}
           </p>
-        )}
-        <details className="limits-settings">
-          <summary>
-            Conversation limit
-            <ChevronDown aria-hidden="true" size={14} />
-          </summary>
-          <label>
-            Maximum turns
-            <input
-              name="max-turns"
-              type="number"
-              min={1}
-              max={1000}
-              value={turns}
-              onChange={(e) => setTurns(Number(e.target.value))}
-              required
-            />
-          </label>
-        </details>
-      </form>
+        </form>
+      </div>
+      <ModelLibrary providers={providers} onChoose={chooseModel} compact />
     </div>
   );
 }
@@ -1095,6 +1443,54 @@ function Providers({
       </Link>
       <h1>Your providers.</h1>
       <p className="intro">Choose where your models come from.</p>
+      <div className="provider-shortcuts" aria-label="Provider shortcuts">
+        {[
+          {
+            id: "openrouter",
+            name: "OpenRouter",
+            kind: "openai_compat",
+            base_url: "https://openrouter.ai/api/v1",
+          },
+          {
+            id: "openai",
+            name: "OpenAI",
+            kind: "openai_compat",
+            base_url: "https://api.openai.com/v1",
+          },
+          {
+            id: "anthropic",
+            name: "Anthropic",
+            kind: "anthropic",
+            base_url: "https://api.anthropic.com/v1",
+          },
+          {
+            id: "ollama",
+            name: "Ollama",
+            kind: "openai_compat",
+            base_url: "http://host.docker.internal:11434/v1",
+          },
+        ].map((p) => (
+          <button
+            type="button"
+            key={p.id}
+            onClick={() => {
+              setEditing(
+                providers.find((x) => x.id === p.id) || {
+                  ...p,
+                  kind: p.kind as Provider["kind"],
+                  has_key: false,
+                },
+              );
+              setKind(p.kind as Provider["kind"]);
+              setOpen(true);
+              setSaved(false);
+            }}
+          >
+            {p.name}
+            <ArrowUpRight aria-hidden="true" size={15} />
+          </button>
+        ))}
+      </div>
       <div className="provider-list">
         {providers.map((p) => (
           <div className="provider-row" key={p.id}>

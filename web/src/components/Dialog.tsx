@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 export function Dialog({
   title,
@@ -14,7 +15,7 @@ export function Dialog({
     ref.current?.showModal();
     return () => ref.current?.close();
   }, []);
-  return (
+  return createPortal(
     <dialog
       ref={ref}
       onCancel={close}
@@ -43,6 +44,7 @@ export function Dialog({
         </button>
       </header>
       {children}
-    </dialog>
+    </dialog>,
+    document.body,
   );
 }

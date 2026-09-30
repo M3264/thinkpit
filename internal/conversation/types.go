@@ -65,6 +65,7 @@ type Attempt struct {
 	Error          string `json:"error,omitempty"`
 }
 type Conversation struct {
+	Context            []Evidence      `json:"context,omitempty"`
 	LastEventID        int64           `json:"last_event_id,omitempty"`
 	ID                 string          `json:"id"`
 	Topic              string          `json:"topic"`
@@ -111,4 +112,14 @@ func ID() string {
 		panic(err)
 	}
 	return hex.EncodeToString(b)
+}
+
+// Evidence is explicitly supplied by the human; models have no tool permissions.
+type Evidence struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	URL       string `json:"url,omitempty"`
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated"`
 }

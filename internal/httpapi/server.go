@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -32,6 +33,7 @@ type Server struct {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	s.workspace(mux)
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "thinkpit_session", Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1, Secure: s.secure(r)})
@@ -56,7 +58,37 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, p)
 	})
+
+	mux.HandleFunc("GET /api/catalog/openrouter", func(w http.ResponseWriter, r *http.Request) {
+		adapter, _ := provider.New(provider.Config{ID: "openrouter", Kind: "openai_compat", BaseURL: "https://openrouter.ai/api/v1"})
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		catalog, err := adapter.Models(ctx)
+		if err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+		write(w, 200, catalog)
+	})
 	mux.HandleFunc("PUT /api/providers/{id}", s.saveProvider)
+	mux.HandleFunc("GET /api/providers/{id}/models", func(w http.ResponseWriter, r *http.Request) {
+		config, err := s.Store.Provider(r.Context(), r.PathValue("id"))
+		if failure(w, err) {
+			return
+		}
+		adapter, err := provider.New(config)
+		if failure(w, err) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		catalog, err := adapter.Models(ctx)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		write(w, 200, catalog)
+	})
 	mux.HandleFunc("GET /api/conversations", func(w http.ResponseWriter, r *http.Request) {
 		cs, err := s.Store.List(r.Context())
 		if failure(w, err) {
@@ -193,10 +225,11 @@ func (s *Server) saveProvider(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Topic        string                     `json:"topic"`
-		Participants []conversation.Participant `json:"participants"`
-		AskQuestions *bool                      `json:"ask_questions"`
-		Limits       conversation.Limits        `json:"limits"`
+		Topic         string                     `json:"topic"`
+		ContextTokens []string                   `json:"context_tokens,omitempty"`
+		Participants  []conversation.Participant `json:"participants"`
+		AskQuestions  *bool                      `json:"ask_questions"`
+		Limits        conversation.Limits        `json:"limits"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -208,6 +241,11 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	c, err := conversation.New(body.Topic, body.Participants, ask, body.Limits)
 	if err != nil {
 		http.Error(w, "invalid conversation settings", 400)
+		return
+	}
+	c.Context, err = s.resolve(body.ContextTokens, nil)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
 		return
 	}
 	for _, p := range c.Participants {
@@ -223,18 +261,28 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Action       string `json:"action"`
-		Text         string `json:"text"`
-		AskQuestions *bool  `json:"ask_questions"`
+		Action        string   `json:"action"`
+		Text          string   `json:"text"`
+		AskQuestions  *bool    `json:"ask_questions"`
+		ContextTokens []string `json:"context_tokens,omitempty"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
 	var out *conversation.Conversation
 	err := s.Store.Change(r.Context(), r.PathValue("id"), "", "control", func(c *conversation.Conversation) (any, error) {
+
+		context, err := s.resolve(body.ContextTokens, c.Context)
+		if err != nil {
+			return nil, conversation.ErrInvalid
+		}
+		if len(body.ContextTokens) > 0 && body.Action != "message" {
+			return nil, conversation.ErrInvalid
+		}
 		if err := c.Command(body.Action, body.Text, body.AskQuestions); err != nil {
 			return nil, err
 		}
+		c.Context = context
 		out = c
 		return c, nil
 	})

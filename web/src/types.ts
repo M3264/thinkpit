@@ -29,6 +29,7 @@ export type Message = {
   created_at: string;
 };
 export type Conversation = {
+  context?: Evidence[];
   id: string;
   topic: string;
   state:
@@ -56,3 +57,29 @@ export type Conversation = {
   last_event_id?: number;
 };
 export type StreamEvent = { id: string; kind: string; data: unknown };
+
+export type Model = {
+  id: string;
+  name: string;
+  description?: string;
+  context_length?: number;
+  free?: boolean;
+  capabilities: string[];
+};
+export type Catalog = { models: Model[]; truncated: boolean };
+export type Evidence = {
+  id: string;
+  kind: "file" | "web";
+  name: string;
+  url?: string;
+  text: string;
+  truncated: boolean;
+};
+export type PreparedEvidence = { evidence: Evidence; token: string };
+export type Setup = {
+  id: string;
+  name: string;
+  participants: Participant[];
+  limits: Conversation["limits"];
+  ask_questions: boolean;
+};

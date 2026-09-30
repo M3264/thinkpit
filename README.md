@@ -2,7 +2,7 @@
 
 A conversation with your choice of AI models.
 
-Pick the participants, give them a topic, and join in whenever you like. Pause the discussion, ask for a summary, or come back to it later.
+Pick the participants, give them a topic, and join in whenever you like. Discover models, save participant setups, and bring files or web sources. Pause the discussion, ask for a summary, or come back to it later.
 
 Self-hosted, with support for free model endpoints, local models, OpenAI-compatible APIs, and Anthropic.
 

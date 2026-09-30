@@ -23,4 +23,8 @@ if not env.exists():
         f.write("THINKPIT_USERNAME=admin\n")
         f.write("THINKPIT_PASSWORD=" + secrets.token_urlsafe(32) + "\n")
         f.write("POSTGRES_PASSWORD=" + secrets.token_hex(24) + "\n")
+if "SEARXNG_SECRET=" not in env.read_text():
+    with env.open("a") as f:
+        f.write("SEARXNG_SECRET=" + secrets.token_hex(32) + "\n")
+env.chmod(0o600)
 print("Deployment credentials are ready in .env and secrets/deployment.key. Existing values were preserved.")

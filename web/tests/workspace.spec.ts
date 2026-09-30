@@ -59,6 +59,7 @@ const initial = {
   last_event_id: 42,
 };
 async function mock(page: Page, { login = false, empty = false } = {}) {
+  let setups:any[]=[];
   let authed = !login,
     providers: any[] = empty ? [] : [provider],
     conversations: any[] = empty ? [] : [structuredClone(initial)],
@@ -88,6 +89,12 @@ async function mock(page: Page, { login = false, empty = false } = {}) {
     }
     if (path === "/api/providers" && request.method() === "GET")
       return json(providers);
+    if(path==='/api/setups'&&request.method()==='GET')return json(setups);
+    if(path.startsWith('/api/setups/')){if(request.method()==='DELETE'){setups=setups.filter(s=>s.id!==path.split('/').at(-1));return route.fulfill({status:204})}const saved={...request.postDataJSON(),id:path.split('/').at(-1)};setups=[saved,...setups];return json(saved)}
+    if(path.endsWith('/models')||path==='/api/catalog/openrouter')return json({models:[{id:'cedar',name:'Cedar Reasoner',description:'Fictional deterministic test model for discussing tradeoffs.',free:true,context_length:32000,capabilities:['reasoning','tools']},{id:'orchid',name:'Orchid Vision',description:'Fictional deterministic test model for text and image context.',free:false,context_length:64000,capabilities:['vision']},{id:'unknown',name:'Model with unknown pricing',capabilities:[]}],truncated:false});
+    if(path==='/api/attachments')return json({evidence:{id:'file-1',kind:'file',name:'notes.md',text:'Fictional volunteer budget is 40 hours.',truncated:false},token:'prepared-file'});
+    if(path==='/api/search')return json({results:[{title:'Fictional library source',url:'https://example.com/library',content:'A test source about the fictional library.'}],warnings:[]});
+    if(path==='/api/sources')return json({evidence:{id:'source-1',kind:'web',name:'Fictional library source',url:'https://example.com/library',text:'Fictional trial details.',truncated:false},token:'prepared-source'});
     if (path.startsWith("/api/providers/")) {
       const body = request.postDataJSON();
       const saved = {
@@ -127,6 +134,7 @@ async function mock(page: Page, { login = false, empty = false } = {}) {
       if (body.action === "message") {
         if (body.text === "fail this message")
           return json({ error: "failed" }, 500);
+        current.context=body.context_tokens?.length?[{id:"file-1",kind:"file",name:"notes.md",text:"Fictional volunteer budget is 40 hours.",truncated:false}]:current.context;
         current.messages.push({
           id: "human",
           speaker_id: "user",
@@ -202,6 +210,7 @@ async function providers(page: Page) {
     await page.getByRole("link", { name: "Providers", exact: true }).click();
 }
 async function capture(page: Page, name: string) {
+  await page.evaluate(() => { document.querySelectorAll(".new-main,.settings-main").forEach(el => el.scrollTop = 0); window.scrollTo(0,0); });
   await page.screenshot({
     path: `../.impeccable/review/${test.info().project.name}-${name}.png`,
     fullPage: true,
@@ -221,7 +230,7 @@ test("login and provider onboarding", async ({ page }) => {
   await page.getByLabel("Password", { exact: true }).fill("test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "What’s on your mind?" }),
+    page.getByRole("heading", { name: "Put a few minds to work." }),
   ).toBeVisible();
   await page.getByRole("link", { name: /Set up a provider/ }).click();
   await page.getByRole("button", { name: "Try Pollinations — no key" }).click();
@@ -329,7 +338,7 @@ test("essential question, export, summary and deletion confirmation", async ({
     .getByRole("button", { name: "Delete conversation", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "What’s on your mind?" }),
+    page.getByRole("heading", { name: "Put a few minds to work." }),
   ).toBeVisible();
 });
 
@@ -406,4 +415,50 @@ test("stream snapshots replace provisional text and reconnect from the last even
     page.getByText("Provisional reply", { exact: true }),
   ).not.toBeVisible();
   await expect.poll(() => replayCursor).toBe("45");
+});
+
+test('discover, filter, compare, and add models; save and reload a setup',async({page})=>{
+ await mock(page);await page.goto('/');
+ await expect(page.getByRole('heading',{name:'Discover models'})).toBeVisible();
+ await page.getByRole('button',{name:'Free',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Cedar Reasoner'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Orchid Vision'})).not.toBeVisible();
+ await page.getByRole('button',{name:'All models',exact:true}).click();
+ await page.getByRole('button',{name:'Compare Cedar Reasoner'}).click();
+ await page.getByRole('button',{name:'Compare Orchid Vision'}).click();
+ await expect(page.getByRole('table')).toContainText('32,000');
+ await page.getByRole('button',{name:'Add Cedar Reasoner'}).click();
+ await expect(page.getByLabel('Participant 1 name')).toHaveValue('Cedar Reasoner');
+ await page.getByRole('button',{name:'Add Orchid Vision'}).click();
+ await page.getByLabel('Save these participants').fill('Fictional research team');
+ await page.getByRole('button',{name:'Save setup',exact:true}).click();
+ await expect(page.getByText('Setup saved.',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Remove participant 2'}).click();
+ await page.getByLabel('Use a saved setup').selectOption({label:'Fictional research team'});
+ await expect(page.getByLabel('Participant 2 name')).toHaveValue('Orchid Vision');
+ await page.getByRole('button',{name:'Clear comparison'}).click();
+ await capture(page,'discovery');
+ await page.goto('/?view=models');
+ await expect(page.getByRole('heading',{name:'Model library'})).toBeVisible();
+ await capture(page,'models');
+});
+
+test('attach a file, search and select web evidence, then preserve sources in conversation',async({page})=>{
+ await mock(page);await page.goto('/?conversation=test-conversation');
+ await expect(page.getByLabel('Your message')).toBeVisible();
+ await page.getByLabel('Attach context file').setInputFiles({name:'notes.md',mimeType:'text/markdown',buffer:Buffer.from('Fictional volunteer budget is 40 hours.')});
+ await expect(page.getByText('notes.md',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Web sources',exact:true}).click();
+ await page.getByLabel('Search the web').fill('fictional library hours');
+ await page.getByRole('button',{name:'Search',exact:true}).click();
+ await expect(page.getByRole('link',{name:'Fictional library source'})).toBeVisible();
+ await page.getByRole('button',{name:'Add source',exact:true}).click();
+ await expect(page.getByText('1 web sources selected.')).toBeVisible();
+ await page.getByRole('button',{name:'Done',exact:true}).click();
+ await page.getByLabel('Your message').fill('Use this context in the discussion.');
+ await page.getByRole('button',{name:'Send message'}).click();
+ await expect(page.getByLabel('Your message')).toHaveValue('');
+ await page.getByRole('button',{name:'Sources (1)'}).click();
+ await page.getByRole('dialog').getByText('notes.md',{exact:true}).click();
+ await expect(page.getByText('Fictional volunteer budget is 40 hours.',{exact:true})).toBeVisible();
 });
