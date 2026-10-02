@@ -18,7 +18,7 @@ Include durable execution, credential protection, reconnect handling, and Docker
 
 ## Milestone 3: Add evidence and tools
 
-Introduce optional web search and page fetch, evidence links, MCP connections, per-participant tool grants, approval handling, and reusable skills.
+The web release now includes attachments, evidence links, and optional model-driven web search, public page reading, and current-time lookups with conversation-level permission. Next add MCP connections, per-participant grants, approval handling, and reusable skills.
 
 **Exit:** participants can bring sources into a conversation while the engine preserves permission boundaries and source provenance.
 

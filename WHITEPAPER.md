@@ -16,7 +16,7 @@ Structured workflows remain an optional extension of this conversational foundat
 
 Providers generate contributions and propose conversational actions. An authoritative Go engine validates those actions, schedules turns, enforces limits, and records state.
 
-Models cannot change permissions or execution rules through conversational text. Future tool output is treated as untrusted material, with access controlled independently for each participant.
+Models cannot change permissions or execution rules through conversational text. Read-only tool output is treated as untrusted material. A visible conversation-level grant permits public web search, public page reading, and current-time lookups. The engine validates requests and records results, sources, and failures; later tool integrations require their own access boundaries.
 
 The browser observes execution and submits user actions; it does not own the lifetime of a conversation.
 
@@ -33,3 +33,5 @@ Initial evaluation examines conversational responsiveness, useful disagreement, 
 Self-hosting gives the operator control over stored conversations. External model providers still receive the context sent to them. Local-only operation requires local endpoints and no external tools.
 
 The interface identifies each participant's provider before execution. Credentials are protected server-side, and operators can export and delete conversations.
+
+When Web access is enabled, models may send search queries to the configured search service and its engines, and fetch public pages. Operators can disable this per conversation. Model providers receive the returned excerpts as conversation context.

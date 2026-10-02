@@ -20,7 +20,7 @@ A single-user, self-hosted browser app where you can:
 
 Start evaluation with free endpoints and explicit free model choices. Provider failures must remain visible; do not silently switch models.
 
-Search, MCP, skills, attachments, and advanced protocol editing follow after the conversational core works. Supported OpenAI/ChatGPT and Claude account connection paths are planned alongside API-key connections; see [provider connection notes](docs/PROVIDERS.md).
+The web release adds attachments and optional read-only web search, public page reading, and current-time tools. MCP, reusable skills, and advanced protocol editing remain later extensions. Supported OpenAI/ChatGPT and Claude account connection paths are planned alongside API-key connections; see [provider connection notes](docs/PROVIDERS.md).
 
 ## Stack
 
@@ -75,3 +75,10 @@ Enforce token budgets before calls by reserving output capacity. Show dollar est
 - Credentials never appear in browser responses, exports, or logs.
 
 Use deterministic fake providers for engine tests and real providers for end-to-end conversational evaluation.
+
+
+### Everyday interface and current information
+
+Start with a topic and visible model choices. Keep connection settings, instructions, and limits outside the normal conversation flow. Read replies in a dedicated column with an independent participant roster, inline failure recovery, source activity, and a persistent composer.
+
+Web access is a visible per-conversation grant. Models may request public web search, page reading, and current time; the engine validates requests and returns results to the requesting participant. Record sources, retrieval times, failures, and interruptions. Bound lookups separately from generation budgets and cancel them when humans interrupt or revoke access. Retrieved data cannot grant permissions or trigger write actions.

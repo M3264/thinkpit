@@ -39,7 +39,25 @@ type Question struct {
 	Essential bool   `json:"essential"`
 	MessageID string `json:"message_id,omitempty"`
 }
+type ToolCall struct {
+	Name     string `json:"name"`
+	Query    string `json:"query,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
+}
+type ToolRecord struct {
+	ID            string     `json:"id"`
+	ParticipantID string     `json:"participant_id"`
+	MessageID     string     `json:"message_id"`
+	Call          ToolCall   `json:"call"`
+	Status        string     `json:"status"`
+	Result        string     `json:"result,omitempty"`
+	Error         string     `json:"error,omitempty"`
+	Sources       []Evidence `json:"sources,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+}
 type Control struct {
+	Tool         *ToolCall `json:"tool,omitempty"`
 	AddressedID  string    `json:"addressed_id"`
 	Question     *Question `json:"question"`
 	ReadyToPause bool      `json:"ready_to_pause"`
@@ -65,6 +83,10 @@ type Attempt struct {
 	Error          string `json:"error,omitempty"`
 }
 type Conversation struct {
+	ToolsEnabled       bool              `json:"tools_enabled"`
+	ToolSteps          int               `json:"tool_steps,omitempty"`
+	Tools              []ToolRecord      `json:"tools,omitempty"`
+	PendingTool        string            `json:"pending_tool_id,omitempty"`
 	Unavailable        map[string]string `json:"unavailable_participants,omitempty"`
 	RetryAt            *time.Time        `json:"retry_at,omitempty"`
 	RetryCount         int               `json:"automatic_retry_count,omitempty"`

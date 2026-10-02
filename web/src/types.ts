@@ -28,7 +28,12 @@ export type Message = {
   control?: { question?: Question | null; ready_to_pause: boolean };
   created_at: string;
 };
+export type ToolRecord = { id:string;participant_id:string;message_id:string;call:{name:string;query?:string;url?:string;timezone?:string};status:string;result?:string;error?:string;sources?:Evidence[];created_at:string };
 export type Conversation = {
+ tools_enabled?:boolean;
+ tools?:ToolRecord[];
+ pending_tool_id?:string;
+
   next?: number;
   unavailable_participants?: Record<string,string>;
   retry_at?: string;

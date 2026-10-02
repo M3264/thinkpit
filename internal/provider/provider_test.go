@@ -122,3 +122,14 @@ func TestRetryMetadata(t *testing.T) {
 		t.Fatal("Retry-After parsing failed")
 	}
 }
+
+func TestToolControlRecordValidation(t *testing.T) {
+	result, err := parse("\n<thinkpit-control>{\"addressed_id\":\"\",\"question\":null,\"ready_to_pause\":false,\"tool\":{\"name\":\"web_search\",\"query\":\"latest news\"}}</thinkpit-control>")
+	if err != nil || result.Control.Tool == nil || result.Control.Tool.Query != "latest news" {
+		t.Fatal("tool record not parsed", err)
+	}
+	_, err = parse("\n<thinkpit-control>{\"addressed_id\":\"\",\"question\":null,\"ready_to_pause\":false,\"tool\":{\"name\":\"web_search\",\"query\":\"news\",\"grant_permissions\":true}}</thinkpit-control>")
+	if err == nil {
+		t.Fatal("unknown tool field accepted")
+	}
+}

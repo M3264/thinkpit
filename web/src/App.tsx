@@ -1,17 +1,19 @@
 import {
-  useCallback,
   useEffect,
   useRef,
   useState,
-  type FormEvent,
+  useCallback,
   type ReactNode,
 } from "react";
 import {
-  ArrowUp,
   Plus,
   PanelLeft,
+  Search,
   Settings2,
   LogOut,
+  Globe,
+  ArrowUp,
+  ArrowUpRight,
   Pause,
   Play,
   Square,
@@ -19,55 +21,56 @@ import {
   Trash2,
   X,
   Check,
-  ChevronDown,
-  MessageCircle,
-  LoaderCircle,
-  ArrowLeft,
-  ArrowUpRight,
-  Shapes,
   Copy,
+  ChevronDown,
+  LoaderCircle,
+  MessageCircle,
+  SlidersHorizontal,
+  Clock,
+  BookOpen,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, post, stream, ApiError } from "./api";
+import { api, post, stream } from "./api";
+import { loadCatalog, peekCatalog, clearCatalogs } from "./catalog";
 import type {
   Conversation,
-  Participant,
   Provider,
-  Model,
+  Participant,
   PreparedEvidence,
+  Model,
   Setup,
+  ToolRecord,
 } from "./types";
-import { Textarea } from "./components/Textarea";
-import { ContextInput } from "./components/ContextInput";
-import { ModelLibrary } from "./components/ModelLibrary";
-import { loadCatalog, clearCatalogs } from "./catalog";
-import { ModelSelect, ProviderModels } from "./components/ModelSelect";
 import { Dialog } from "./components/Dialog";
-const stateName: Record<Conversation["state"], string> = {
+import { ContextInput } from "./components/ContextInput";
+import { Providers } from "./components/Connections";
+import { ModelLibrary } from "./components/ModelLibrary";
+import { Textarea } from "./components/Textarea";
+const uid = () => crypto.randomUUID().replaceAll("-", "");
+const labels = {
   ready: "Ready",
   running: "Discussing",
   waiting_for_user: "Your turn",
   paused: "Paused",
-  stopped: "Stopped",
+  stopped: "Finished",
   failed: "Needs attention",
 };
-const id = () => crypto.randomUUID().replaceAll("-", "");
 function Link({
   href,
   children,
-  onNavigate,
   className = "",
+  onClick,
 }: {
   href: string;
   children: ReactNode;
-  onNavigate?: () => void;
   className?: string;
+  onClick?: () => void;
 }) {
   return (
     <a
-      className={className}
       href={href}
+      className={className}
       onClick={(e) => {
         if (
           e.button === 0 &&
@@ -79,7 +82,7 @@ function Link({
           e.preventDefault();
           history.pushState({}, "", href);
           window.dispatchEvent(new PopStateEvent("popstate"));
-          onNavigate?.();
+          onClick?.();
         }
       }}
     >
@@ -87,9 +90,9 @@ function Link({
     </a>
   );
 }
-function Seal({ name, index = 0 }: { name: string; index?: number }) {
+function Avatar({ name, index = 0 }: { name: string; index?: number }) {
   return (
-    <span aria-hidden="true" className={`seal seal-${index % 5}`}>
+    <span className={`avatar tone-${index % 5}`} aria-hidden="true">
       {name.slice(0, 1).toUpperCase()}
     </span>
   );
@@ -97,56 +100,128 @@ function Seal({ name, index = 0 }: { name: string; index?: number }) {
 export default function App() {
   const [auth, setAuth] = useState<boolean | null>(null),
     [providers, setProviders] = useState<Provider[]>([]),
-    [conversations, setConversations] = useState<Conversation[]>([]),
+    [historyList, setHistory] = useState<Conversation[]>([]),
     [current, setCurrent] = useState<Conversation | null>(null),
     [url, setURL] = useState(location.search),
-    [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
-    [loading, setLoading] = useState(false),
-    [menu, setMenu] = useState(false),
-    [sidebarCollapsed, setSidebarCollapsed] = useState(() => { try { return localStorage.getItem("thinkpit:sidebar-collapsed") === "true"; } catch { return false; } }),
+    [error, setError] = useState(""),
     [connected, setConnected] = useState(true),
-    [remove, setRemove] = useState(false),
-    [stopping, setStopping] = useState(false),
-    [draftParticipants, setDraftParticipants] = useState<Participant[]>([]),
-    [draftContext, setDraftContext] = useState<PreparedEvidence[]>([]),
+    [loading, setLoading] = useState(false);
+  const [collapsed, setCollapsed] = useState(
+      () => localStorage.getItem("thinkpit:sidebar-collapsed") === "true",
+    ),
+    [navOpen, setNavOpen] = useState(false),
+    [historyQuery, setHistoryQuery] = useState(""),
+    [modelsOpen, setModelsOpen] = useState(false),
+    [optionsOpen, setOptionsOpen] = useState(false),
+    [peopleOpen, setPeopleOpen] = useState(false),
     [sourcesOpen, setSourcesOpen] = useState(false),
-    [participantsOpen, setParticipantsOpen] = useState(false),
-    [historyQuery, setHistoryQuery] = useState("");
+    [deleteOpen, setDeleteOpen] = useState(false);
+  const [topic, setTopic] = useState(
+      () => sessionStorage.getItem("thinkpit:topic") || "",
+    ),
+    [draft, setDraft] = useState<Participant[]>(() => {
+      try {
+        return JSON.parse(
+          sessionStorage.getItem("thinkpit:participants") || "[]",
+        );
+      } catch {
+        return [];
+      }
+    }),
+    [context, setContext] = useState<PreparedEvidence[]>([]),
+    [contextBusy, setContextBusy] = useState(false),
+    [web, setWeb] = useState(true),
+    [ask, setAsk] = useState(true),
+    [limits, setLimits] = useState({
+      max_turns: 24,
+      max_tokens: 150000,
+      max_output_tokens: 1024,
+    });
   const params = new URLSearchParams(url),
     selected = params.get("conversation"),
-    settings = params.get("view") === "providers",
-    library = params.get("view") === "models",
-    currentID = current?.id,
+    view = params.get("view"),
     last = useRef(""),
-    scrollRef = useRef<HTMLDivElement>(null),
-    follow = useRef(true);
+    follow = useRef(true),
+    transcript = useRef<HTMLDivElement>(null),
+    didDefault = useRef(false);
   const refresh = useCallback(async () => {
     const [p, c] = await Promise.all([
       api<Provider[]>("/providers"),
       api<Conversation[]>("/conversations"),
     ]);
     setProviders(p);
-    p.forEach(provider => void loadCatalog(provider));
-    setConversations(c);
+    setHistory(c);
+    p.forEach((v) => void loadCatalog(v));
+    return p;
   }, []);
   useEffect(() => {
     api("/session")
       .then(() => setAuth(true))
       .catch(() => setAuth(false));
-    const listener = () => setURL(location.search);
-    window.addEventListener("popstate", listener);
-    return () => window.removeEventListener("popstate", listener);
+    const fn = () => {
+      setURL(location.search);
+      setNavOpen(false);
+    };
+    window.addEventListener("popstate", fn);
+    return () => window.removeEventListener("popstate", fn);
   }, []);
   useEffect(() => {
-    if (auth) refresh().catch((e) => setError(e.message));
+    if (auth) void refresh().catch((e) => setError(e.message));
   }, [auth, refresh]);
   useEffect(() => {
-    setError("");
+    localStorage.setItem("thinkpit:sidebar-collapsed", String(collapsed));
+  }, [collapsed]);
+  useEffect(() => {
+    sessionStorage.setItem("thinkpit:topic", topic);
+    sessionStorage.setItem("thinkpit:participants", JSON.stringify(draft));
+  }, [topic, draft]);
+  useEffect(() => {
+    if (!topic && !context.length) return;
+    const fn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", fn);
+    return () => window.removeEventListener("beforeunload", fn);
+  }, [topic, draft, context]);
+  useEffect(() => {
+    if (!providers.length || draft.length || didDefault.current) return;
+    let live = true;
+    Promise.all(providers.map((p) => loadCatalog(p))).then(() => {
+      if (!live) return;
+      const usable = providers.filter(
+        (p) =>
+          p.has_key ||
+          !["api.openai.com", "api.anthropic.com", "openrouter.ai"].includes(
+            new URL(p.base_url).hostname,
+          ),
+      );
+      for (const p of usable) {
+        const models = peekCatalog(p).catalog?.models || [];
+        if (models.length) {
+          didDefault.current = true;
+          setDraft(
+            models.slice(0, 2).map((m) => ({
+              id: uid(),
+              name: m.name.slice(0, 128),
+              model: m.id,
+              provider_id: p.id,
+            })),
+          );
+          break;
+        }
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [providers, draft.length]);
+  useEffect(() => {
     setCurrent(null);
     last.current = "";
-    follow.current = true;
-    if (!auth || !selected || settings || library) return;
+    setError("");
+    if (!auth || !selected) return;
     let live = true;
     setLoading(true);
     api<Conversation>(`/conversations/${encodeURIComponent(selected)}`)
@@ -154,17 +229,11 @@ export default function App() {
         if (live) {
           last.current = String(c.last_event_id || "");
           setCurrent(c);
+          follow.current = true;
         }
       })
       .catch((e) => {
-        if (live) {
-          setError(
-            e.status === 404
-              ? "This conversation is no longer available. Start a new one."
-              : e.message,
-          );
-          if (e.status === 401) setAuth(false);
-        }
+        if (live) setError(e.message);
       })
       .finally(() => {
         if (live) setLoading(false);
@@ -172,21 +241,16 @@ export default function App() {
     return () => {
       live = false;
     };
-  }, [auth, selected, settings, library]);
+  }, [auth, selected]);
   useEffect(() => {
-    if (!auth || !currentID) return;
+    if (!auth || !current?.id || current.id !== selected) return;
     const controller = new AbortController();
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    const update = (c: Conversation) => {
-      setCurrent(c);
-      setConversations((old) =>
-        [c, ...old.filter((x) => x.id !== c.id)].slice(0, 100),
-      );
-    };
+    let timer: ReturnType<typeof setTimeout>;
+    const id = current.id;
     const connect = async () => {
       try {
         await stream(
-          currentID,
+          id,
           last.current,
           controller.signal,
           (event) => {
@@ -197,61 +261,54 @@ export default function App() {
               const delta = event.data as { attempt_id: string; text: string };
               setCurrent((c) => {
                 if (!c || c.active_attempt_id !== delta.attempt_id) return c;
-                const attempt = c.attempts.find(
-                  (a) => a.id === delta.attempt_id,
-                );
+                const a = c.attempts.find((a) => a.id === delta.attempt_id);
                 return {
                   ...c,
                   messages: c.messages.map((m) =>
-                    m.id === attempt?.message_id
+                    m.id === a?.message_id
                       ? { ...m, content: m.content + delta.text }
                       : m,
                   ),
                 };
               });
-            } else update(event.data as Conversation);
+            } else {
+              const c = event.data as Conversation;
+              setCurrent(c);
+              setHistory((old) => [c, ...old.filter((v) => v.id !== c.id)]);
+            }
           },
           () => setConnected(true),
         );
         if (!controller.signal.aborted) {
           setConnected(false);
-          retry = setTimeout(connect, 1200);
+          timer = setTimeout(connect, 1400);
         }
       } catch (e) {
-        if (controller.signal.aborted) return;
-        if (e instanceof ApiError && e.status === 401) {
-          setAuth(false);
-          return;
+        if (!controller.signal.aborted) {
+          setConnected(false);
+          timer = setTimeout(connect, 1500);
         }
-        setConnected(false);
-        retry = setTimeout(connect, 1500);
       }
     };
-    connect();
+    void connect();
     return () => {
       controller.abort();
-      if (retry) clearTimeout(retry);
+      clearTimeout(timer);
     };
-  }, [auth, currentID]);
+  }, [auth, current?.id, selected]);
   useEffect(() => {
-    if (follow.current && scrollRef.current)
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [current?.messages]);
-  async function run(work: () => Promise<void>) {
+    if (follow.current && transcript.current)
+      transcript.current.scrollTop = transcript.current.scrollHeight;
+  }, [current?.messages, current?.tools]);
+  async function run(fn: () => Promise<void>) {
     if (busy) return false;
     setBusy(true);
     setError("");
     try {
-      await work();
+      await fn();
       return true;
     } catch (e) {
-      const err = e as ApiError;
-      setError(
-        err.status === 409
-          ? "That action is no longer available. The conversation may have changed."
-          : err.message,
-      );
-      if (err.status === 401) setAuth(false);
+      setError((e as Error).message);
       return false;
     } finally {
       setBusy(false);
@@ -265,541 +322,749 @@ export default function App() {
         { action, ...extra },
       );
       setCurrent(c);
-      await refresh().catch(() => {});
+      setHistory((old) => [c, ...old.filter((v) => v.id !== c.id)]);
     });
   }
-  async function chooseModel(provider: Provider, model: Model) {
+  async function choose(provider: Provider, model: Model) {
     if (!providers.some((p) => p.id === provider.id)) {
       await api(`/providers/${provider.id}`, {
         method: "PUT",
         body: JSON.stringify({
-          name: "OpenRouter",
+          name: provider.name,
           kind: provider.kind,
           base_url: provider.base_url,
         }),
       });
       await refresh();
     }
-
-    setDraftParticipants((old) =>
+    setDraft((old) =>
       old.length >= 64
         ? old
         : [
             ...old,
             {
-              id: id(),
-              name: model.name.slice(0,128),
-              provider_id: provider.id,
+              id: uid(),
+              name: model.name.slice(0, 128),
               model: model.id,
-              instructions: "",
+              provider_id: provider.id,
             },
           ],
     );
   }
+  async function start() {
+    if (contextBusy) return;
+    await run(async () => {
+      if (!topic.trim()) throw Error("Add a topic to start your conversation.");
+      if (!draft.length) {
+        setModelsOpen(true);
+        throw Error("Choose at least one model to join you.");
+      }
+      const missing = draft.find((p) => {
+        const provider = providers.find((v) => v.id === p.provider_id);
+        return (
+          provider &&
+          !provider.has_key &&
+          ["api.openai.com", "api.anthropic.com", "openrouter.ai"].includes(
+            new URL(provider.base_url).hostname,
+          )
+        );
+      });
+      if (missing)
+        throw Error(
+          `Connect ${providers.find((p) => p.id === missing.provider_id)?.name} in Settings to use this model.`,
+        );
+      const c = await post<Conversation>("/conversations", {
+        topic,
+        participants: draft,
+        ask_questions: ask,
+        tools_enabled: web,
+        limits,
+        context_tokens: context.map((v) => v.token),
+      });
+      await post(`/conversations/${c.id}/controls`, { action: "start" });
+      setTopic("");
+      setContext([]);
+      setHistory((old) => [c, ...old]);
+      history.pushState({}, "", `/?conversation=${c.id}`);
+      setURL(location.search);
+    });
+  }
+  const allSources = [
+    ...(current?.context || []),
+    ...(current?.tools || []).flatMap((t) => t.sources || []),
+  ].filter(
+    (s, i, a) => a.findIndex((v) => (v.url || v.id) === (s.url || s.id)) === i,
+  );
   const sidebar = (
     <>
-      <Link href="/" className="brand" onNavigate={() => setMenu(false)}>
-        <img className="brand-mark" src="/brand/thinkpit-mark.svg" alt="" width="38" height="30" />
-        <span translate="no">ThinkPit</span>
+      <Link href="/" className="brand">
+        <img src="/brand/thinkpit-mark.svg" alt="" width="34" height="28" />
+        <span>ThinkPit</span>
       </Link>
-      <Link href="/" className="new-chat" onNavigate={() => setMenu(false)}>
-        <Plus aria-hidden="true" size={18} />
+      <Link href="/" className="new-chat">
+        <Plus size={17} aria-hidden="true" />
         New conversation
       </Link>
-      <Link
-        href="/?view=models"
-        className={`models-nav ${library ? "selected" : ""}`}
-        onNavigate={() => setMenu(false)}
-      >
-        <Shapes aria-hidden="true" size={18} />
-        Model library
-        <ArrowUpRight aria-hidden="true" size={15} />
-      </Link>
-      <nav aria-label="Conversation history" className="history">
-        <h2>Conversations</h2>
+      <div className="history-title">Your conversations</div>
+      <div className="history-search-wrap">
+        <Search size={14} aria-hidden="true" />
         <input
-          className="history-search"
-          name="history-search"
-          autoComplete="off"
           aria-label="Search conversations"
-          placeholder="Search conversations…"
+          type="search"
+          placeholder="Search…"
           value={historyQuery}
           onChange={(e) => setHistoryQuery(e.target.value)}
         />
-        {conversations.length === 0 ? (
-          <p className="history-empty">Your conversations will appear here.</p>
-        ) : (
-          conversations
-            .filter((c) =>
-              c.topic.toLowerCase().includes(historyQuery.toLowerCase()),
-            )
-            .map((c) => (
-              <Link
-                key={c.id}
-                href={`/?conversation=${c.id}`}
-                className={`history-link ${selected === c.id ? "selected" : ""}`}
-                onNavigate={() => setMenu(false)}
-              >
-                <span>{c.topic}</span>
-                {c.state === "running" && (
-                  <span className="live-dot" aria-label="Running" />
-                )}
-              </Link>
-            ))
+      </div>
+      <nav className="history" aria-label="Conversation history">
+        {historyList
+          .filter((c) =>
+            c.topic.toLowerCase().includes(historyQuery.toLowerCase()),
+          )
+          .map((c) => (
+            <Link
+              key={c.id}
+              className={`history-link ${selected === c.id ? "selected" : ""}`}
+              href={`/?conversation=${c.id}`}
+            >
+              <MessageCircle size={15} aria-hidden="true" />
+              <span>{c.topic}</span>
+            </Link>
+          ))}
+        {!historyList.length && (
+          <p className="history-empty">
+            Your first conversation will appear here.
+          </p>
         )}
       </nav>
-      <footer className="rail-footer">
-        <Link
-          href="/?view=providers"
-          className={settings ? "selected" : ""}
-          onNavigate={() => setMenu(false)}
-        >
-          <Settings2 aria-hidden="true" size={17} />
-          Providers
+      <div className="rail-footer">
+        <Link href="/?view=models">
+          <Search size={16} aria-hidden="true" />
+          Explore models
+        </Link>
+        <Link href="/?view=providers">
+          <Settings2 size={16} aria-hidden="true" />
+          Settings
         </Link>
         <button
           onClick={() =>
-            run(async () => {
+            void run(async () => {
               await post("/logout", {});
-              try {
-                for (const key of Object.keys(sessionStorage))
-                  if (key.startsWith("thinkpit:"))
-                    sessionStorage.removeItem(key);
-              } catch {
-                /* Storage may be disabled. */
-              }
-              setAuth(false);
-              setCurrent(null);
-              setConversations([]);
-              setProviders([]);
               clearCatalogs();
+              setCurrent(null);
+              setHistory([]);
+              setAuth(false);
             })
           }
         >
-          <LogOut aria-hidden="true" size={17} />
+          <LogOut size={16} aria-hidden="true" />
           Sign out
         </button>
-      </footer>
+      </div>
     </>
   );
   if (auth === null)
     return (
       <div className="loading-screen">
-        <LoaderCircle aria-hidden="true" className="spin" size={22} />
-        <span>Opening ThinkPit…</span>
+        <LoaderCircle className="spin" aria-hidden="true" />
+        Opening ThinkPit…
       </div>
     );
   if (!auth) return <Login onLogin={() => setAuth(true)} />;
   return (
-    <div className={`app ${sidebarCollapsed ? "rail-collapsed" : ""}`}>
-      <a href="#main" className="skip-link">
+    <div className={`app ${collapsed ? "rail-collapsed" : ""}`}>
+      <a className="skip-link" href="#main">
         Skip to conversation
       </a>
       <aside className="rail">{sidebar}</aside>
-      {menu && (
-        <Dialog title="ThinkPit" close={() => setMenu(false)}>
-          <div className="mobile-rail">{sidebar}</div>
-        </Dialog>
-      )}
       <div className="workspace">
         <header className="topbar">
-          <button className="icon-button desktop-menu" aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-expanded={!sidebarCollapsed} onClick={() => { const next = !sidebarCollapsed; setSidebarCollapsed(next); try { localStorage.setItem("thinkpit:sidebar-collapsed", String(next)); } catch {} }}><PanelLeft aria-hidden="true" size={20} /></button>
+          <button
+            className="icon-button desktop-menu"
+            aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed(!collapsed)}
+          >
+            <PanelLeft size={19} aria-hidden="true" />
+          </button>
           <button
             className="icon-button mobile-menu"
-            onClick={() => setMenu(true)}
             aria-label="Open navigation"
+            onClick={() => setNavOpen(true)}
           >
-            <PanelLeft aria-hidden="true" size={20} />
+            <PanelLeft size={19} aria-hidden="true" />
           </button>
-          <div className="breadcrumb">
-            {library
-              ? "Model library"
-              : settings
-                ? "Providers"
-                : current
-                  ? "Conversation"
+          <span className="breadcrumb">
+            {current
+              ? "Conversation"
+              : view === "providers"
+                ? "Settings"
+                : view === "models"
+                  ? "Explore models"
                   : "New conversation"}
-          </div>
+          </span>
           {current && (
-            <div className="top-actions">
-              <span role="status" className="status">
-                <span className={`status-dot ${current.state}`} />
-                {current.retry_at ? "Waiting to retry" : stateName[current.state]}
+            <div className="header-actions">
+              <span role="status" className={`status ${current.state}`}>
+                {current.pending_tool_id
+                  ? "Looking things up"
+                  : current.retry_at
+                    ? "Retrying shortly"
+                    : labels[current.state]}
               </span>
-              <button
+              <a
                 className="icon-button"
-                onClick={() =>
-                  run(async () => {
-                    const response = await fetch(
-                      `/api/conversations/${current.id}/export`,
-                      { headers: { Accept: "application/json" } },
-                    );
-                    if (!response.ok)
-                      throw new Error("Could not export. Try again.");
-                    const blob = await response.blob();
-                    const href = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = href;
-                    a.download = "thinkpit.md";
-                    a.click();
-                    URL.revokeObjectURL(href);
-                  })
-                }
+                href={`/api/conversations/${current.id}/export`}
                 aria-label="Export Markdown"
+                download="thinkpit.md"
               >
-                <Download aria-hidden="true" size={18} />
-              </button>
+                <Download size={17} aria-hidden="true" />
+              </a>
               <button
                 className="icon-button"
-                onClick={() => setRemove(true)}
                 aria-label="Delete conversation"
+                onClick={() => setDeleteOpen(true)}
               >
-                <Trash2 aria-hidden="true" size={17} />
+                <Trash2 size={17} aria-hidden="true" />
               </button>
             </div>
           )}
         </header>
+        {error && (
+          <div className="error-banner" role="alert">
+            <span>{error}</span>
+            <button
+              className="icon-button"
+              aria-label="Dismiss error"
+              onClick={() => setError("")}
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </div>
+        )}
         <main
           id="main"
           className={
-            settings || library
-              ? "settings-main"
-              : current
-                ? "chat-main"
-                : "new-main"
+            current ? "chat-main" : view ? "settings-main" : "new-main"
           }
         >
-          {error && (
-            <div className="error-banner" role="alert">
-              {error}
-              <button
-                className="icon-button"
-                onClick={() => setError("")}
-                aria-label="Dismiss error"
-              >
-                <X aria-hidden="true" size={16} />
-              </button>
-            </div>
-          )}
-          {library ? (
+          {loading ? (
+            <div className="loading-screen">Opening conversation…</div>
+          ) : view === "providers" ? (
+            <Providers
+              providers={providers}
+              refresh={async () => {
+                await refresh();
+              }}
+            />
+          ) : view === "models" ? (
             <div className="standalone-library">
-              <ModelLibrary providers={providers} onChoose={chooseModel} />
+              <ModelLibrary providers={providers} onChoose={choose} />
               <Link className="button primary" href="/">
-                Build conversation
-                {draftParticipants.length > 0
-                  ? ` (${draftParticipants.length})`
-                  : ""}
-                <ArrowUpRight aria-hidden="true" size={16} />
+                Use selected models ({draft.length})
+                <ArrowUpRight size={16} aria-hidden="true" />
               </Link>
             </div>
-          ) : settings ? (
-            <Providers providers={providers} refresh={refresh} />
-          ) : loading ? (
-            <div className="loading-screen">
-              <LoaderCircle aria-hidden="true" className="spin" size={22} />
-              <span>Opening conversation…</span>
-            </div>
           ) : !current ? (
-            <NewConversation
-              providers={providers}
-              context={draftContext}
-              setContext={setDraftContext}
-              participants={draftParticipants}
-              setParticipants={setDraftParticipants}
-              chooseModel={chooseModel}
-              create={async (body) => {
-                await run(async () => {
-                  const c = await post<Conversation>("/conversations", body);
-                  history.pushState({}, "", `/?conversation=${c.id}`);
-                  setURL(location.search);
-                  setConversations((old) => [c, ...old]);
-                  setDraftParticipants([]);
-                  setDraftContext([]);
-                  sessionStorage.removeItem("thinkpit:topic");
-                  await post(`/conversations/${c.id}/controls`, {
-                    action: "start",
-                  });
-                });
-              }}
-              busy={busy}
-            />
-          ) : (
-            <div className="conversation-layout">
-              <div className="conversation-reading">
-              <div className="conversation-heading">
-                <h1>{current.topic}</h1>
-                <div className="run-info">
-                  <span>
-                    {current.attempts.length}/{current.limits.max_turns} turns
-                  </span>
-                  <span>
-                    {new Intl.NumberFormat().format(current.charged_tokens)} /{" "}
-                    {new Intl.NumberFormat().format(current.limits.max_tokens)}{" "}
-                    budget units
-                  </span>
+            <div className="start-page">
+              <div className="start-intro">
+                <img
+                  src="/brand/thinkpit-mark.svg"
+                  alt=""
+                  width="64"
+                  height="51"
+                />
+                <h1>What’s on your mind?</h1>
+                <p>
+                  Bring a question. Let a few different minds work through it
+                  with you.
+                </p>
+              </div>
+              <div className="start-composer">
+                <Textarea
+                  aria-label="Conversation topic"
+                  name="topic"
+                  placeholder="What would you like to explore?"
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  rows={3}
+                  maxLength={32000}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === "Enter" &&
+                      !e.shiftKey &&
+                      !e.nativeEvent.isComposing
+                    ) {
+                      e.preventDefault();
+                      void start();
+                    }
+                  }}
+                />
+                <ContextInput
+                  items={context}
+                  onChange={setContext}
+                  onBusy={setContextBusy}
+                />
+                <div className="start-actions">
                   <button
-                    className="text-button"
-                    onClick={() => setSourcesOpen(true)}
+                    className={`mode-button ${web ? "enabled" : ""}`}
+                    aria-pressed={web}
+                    onClick={() => setWeb(!web)}
                   >
-                    Sources ({current.context?.length || 0})
+                    <Globe size={16} aria-hidden="true" />
+                    Web access <span>{web ? "On" : "Off"}</span>
+                  </button>
+                  <button
+                    className="button primary"
+                    disabled={busy || contextBusy}
+                    onClick={() => void start()}
+                  >
+                    {busy ? "Starting…" : "Start conversation"}
+                    <ArrowUp size={16} aria-hidden="true" />
                   </button>
                 </div>
-                <button className="text-button roster-toggle" onClick={() => setParticipantsOpen(true)}>Participants ({current.participants.length})</button>
               </div>
-              <div
-                ref={scrollRef}
-                className="transcript"
-                onScroll={(e) => {
-                  const el = e.currentTarget;
-                  follow.current =
-                    el.scrollHeight - el.scrollTop - el.clientHeight < 90;
-                }}
-              >
-                {current.messages.slice(1).map((m) => {
-                  const index = current.participants.findIndex(
-                      (p) => p.id === m.speaker_id,
-                    ),
-                    human = index === -1,
-                    p = current.participants[index];
-                  if (m.status === "incomplete" && !m.content) return <details className="failed-attempt" key={m.id}><summary>{human ? "You" : p.name} · No reply received</summary><p>{current.attempts.find(a=>a.message_id===m.id)?.error || "The request was interrupted."}</p></details>;
-                  return (
-                    <article
-                      key={m.id}
-                      id={`message-${m.id}`}
-                      className={`message ${human ? "human" : ""}`}
-                    >
-                      <header>
-                        {!human && <Seal name={p.name} index={index} />}
-                        <strong>{human ? "You" : p.name}</strong>
-                        {!human && <span className="message-model">{p.model}</span>}
-                        {m.content && <CopyReply text={m.content}/>}
-                        {m.status === "incomplete" && (
-                          <span className="incomplete">Unfinished</span>
-                        )}
-                        {m.status === "streaming" && (
-                          <span className="writing" aria-label="Writing">
-                            Writing…
-                          </span>
-                        )}
-                      </header>
-                      <div className="message-body">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={{
-                            a: ({ children, href }) => (
-                              <a
-                                href={href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                {children}
-                              </a>
-                            ),
-                          }}
-                        >
-                          {m.content ||
-                            (m.status === "streaming"
-                              ? "Thinking…"
-                              : "No text was received.")}
-                        </ReactMarkdown>
-                      </div>
-                    </article>
-                  );
-                })}
-                {current.state === "failed" && (
-                  <div className="turn-error" role="alert">
-                    <strong>{current.reason === "all_models_failed" ? "All models are unavailable." : "A reply could not finish."}</strong>
-                    <p>
-                      {
-                        [...current.attempts].reverse().find((a) => a.error)
-                          ?.error
-                      }
-                      . Check the provider settings or retry this reply.
-                    </p>
-                    <div className="recovery-actions"><button className="button primary" disabled={busy} onClick={() => control("retry")}>Retry reply</button>{current.participants.length > 1 && current.reason !== "all_models_failed" && <button className="button secondary" disabled={busy} onClick={()=>control("skip_model")}>Skip model & continue</button>}</div>
-                    <Link href="/?view=providers">
-                      Open providers <ArrowUp aria-hidden="true" size={14} />
-                    </Link>
-                  </div>
-                )}
-                {current.retry_at && current.state === "running" && <div className="turn-error" role="status">Provider temporarily unavailable. Automatic retry {current.automatic_retry_count}/2 is scheduled for {new Date(current.retry_at).toLocaleTimeString()}. <button className="text-button" disabled={busy} onClick={()=>control("skip_model")}>Skip this model now</button></div>}
-                {current.reason === "turn_limit" ||
-                current.reason === "token_limit" ? (
-                  <p className="limit-note">
-                    This conversation reached its{" "}
-                    {current.reason === "turn_limit" ? "turn" : "token"} limit.
-                  </p>
-                ) : null}
-                {current.messages.length === 1 &&
-                  current.state !== "running" && (
-                    <p className="empty-transcript">Ready when you are.</p>
-                  )}
+              <div className="model-line">
+                <span className="model-line-label">Discuss with</span>
+                <div className="chosen-models">
+                  {draft.map((p, i) => (
+                    <div className="chosen-model" key={p.id}>
+                      <Avatar name={p.name} index={i} />
+                      <button
+                        className="model-name"
+                        onClick={() => setOptionsOpen(true)}
+                      >
+                        {p.name}
+                      </button>
+                      <button
+                        className="icon-button"
+                        aria-label={`Remove ${p.name}`}
+                        onClick={() =>
+                          setDraft((old) => old.filter((v) => v.id !== p.id))
+                        }
+                      >
+                        <X size={13} aria-hidden="true" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    className="add-model"
+                    onClick={() => setModelsOpen(true)}
+                  >
+                    <Plus size={15} aria-hidden="true" />
+                    {draft.length ? "Add model" : "Choose models"}
+                  </button>
+                </div>
+                <button
+                  className="icon-button"
+                  aria-label="Conversation options"
+                  onClick={() => setOptionsOpen(true)}
+                >
+                  <SlidersHorizontal size={17} aria-hidden="true" />
+                </button>
               </div>
-              <div className="composer-area">
-                {!connected && (
-                  <p role="status" className="connection-note">
-                    Connection interrupted. Reconnecting…
+              {web && (
+                <p className="web-hint">
+                  Models can search the web, read pages, and check the current
+                  time. You’ll see what they find.
+                </p>
+              )}
+              <div className="starter-list">
+                {[
+                  [
+                    "Make a decision",
+                    "Compare my options and help me decide: ",
+                  ],
+                  [
+                    "Check an idea",
+                    "Help me test this idea and find its weak spots: ",
+                  ],
+                  [
+                    "Understand something",
+                    "Explain this and explore different perspectives: ",
+                  ],
+                ].map(([label, value]) => (
+                  <button key={label} onClick={() => setTopic(value)}>
+                    {label}
+                    <ArrowUpRight size={16} aria-hidden="true" />
+                  </button>
+                ))}
+              </div>
+              {!providers.length && (
+                <div className="connection-notice">
+                  <p>
+                    Connect a model service to get started. You only need to do
+                    this once.
                   </p>
-                )}
-                {current.pending_question && (
-                  <div className="pending-question">
-                    <strong>A question for you</strong>
-                    <p>{current.pending_question.text}</p>
+                  <Link className="button secondary" href="/?view=providers">
+                    Connect models
+                    <ArrowUpRight size={15} aria-hidden="true" />
+                  </Link>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="conversation-layout">
+              <section className="conversation-reading">
+                <div className="conversation-heading">
+                  <h1 title={current.topic}>{current.topic}</h1>
+                  <div className="conversation-subhead">
+                    <span>{current.participants.length} models</span>
+                    <button onClick={() => setSourcesOpen(true)}>
+                      Sources ({allSources.length})
+                    </button>
                     <button
-                      className="text-button"
-                      onClick={() => control("skip_question")}
-                      disabled={busy}
+                      onClick={() => setPeopleOpen(true)}
+                      className="roster-toggle"
                     >
-                      Skip this question
+                      Participants
                     </button>
                   </div>
-                )}
-                <div className="conversation-controls">
-                  <label className="question-toggle">
+                </div>
+                <div
+                  ref={transcript}
+                  className="transcript"
+                  onScroll={(e) => {
+                    const el = e.currentTarget;
+                    follow.current =
+                      el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+                  }}
+                >
+                  {current.messages.slice(1).map((m) => {
+                    const index = current.participants.findIndex(
+                        (p) => p.id === m.speaker_id,
+                      ),
+                      human = index < 0,
+                      p = current.participants[index];
+                    return (
+                      <div key={m.id}>
+                        {m.status === "incomplete" && !m.content ? (
+                          <details className="failed-attempt">
+                            <summary>
+                              {p?.name || "Model"} · Couldn’t finish this reply
+                            </summary>
+                            <p>
+                              {
+                                current.attempts.find(
+                                  (a) => a.message_id === m.id,
+                                )?.error
+                              }
+                            </p>
+                          </details>
+                        ) : (
+                          <article
+                            className={`message ${human ? "human" : ""}`}
+                          >
+                            <header>
+                              <Avatar
+                                name={human ? "You" : p.name}
+                                index={index}
+                              />
+                              <strong>{human ? "You" : p.name}</strong>
+                              {m.status === "streaming" && (
+                                <span className="writing">Writing…</span>
+                              )}
+                              {m.status === "incomplete" && (
+                                <span className="incomplete">Unfinished</span>
+                              )}
+                              {m.content && <CopyReply text={m.content} />}
+                            </header>
+                            <div className="message-body">
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                  a: ({ children, href }) => (
+                                    <a
+                                      href={href}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                    >
+                                      {children}
+                                    </a>
+                                  ),
+                                }}
+                              >
+                                {m.content ||
+                                  (m.status === "streaming" ? "Thinking…" : "")}
+                              </ReactMarkdown>
+                            </div>
+                          </article>
+                        )}
+                        {current.tools
+                          ?.filter((t) => t.message_id === m.id)
+                          .map((t) => (
+                            <ToolActivity key={t.id} tool={t} />
+                          ))}
+                      </div>
+                    );
+                  })}
+                  {!current.messages.slice(1).length && (
+                    <div className="discussion-empty">
+                      <div className="avatar-stack">
+                        {current.participants.map((p, i) => (
+                          <Avatar key={p.id} name={p.name} index={i} />
+                        ))}
+                      </div>
+                      <p>
+                        {current.state === "running"
+                          ? "Your models are thinking it through…"
+                          : "Ready when you are."}
+                      </p>
+                    </div>
+                  )}
+                  {current.state === "failed" && (
+                    <div className="recovery-panel">
+                      <strong>
+                        {current.reason === "all_models_failed"
+                          ? "The models couldn’t respond."
+                          : "This reply needs attention."}
+                      </strong>
+                      <p>
+                        You can retry, bring a model back, or check its
+                        connection in Settings.
+                      </p>
+                      <button
+                        className="button primary"
+                        disabled={busy}
+                        onClick={() => void control("retry")}
+                      >
+                        Retry reply
+                      </button>
+                      <Link
+                        href="/?view=providers"
+                        className="button secondary"
+                      >
+                        Check connections
+                      </Link>
+                    </div>
+                  )}
+                  {current.retry_at && (
+                    <div className="retry-note" role="status">
+                      A model is temporarily unavailable. Retrying shortly.
+                      <button onClick={() => void control("skip_model")}>
+                        Skip this model
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div className="composer-area">
+                  {current.pending_question && (
+                    <div className="pending-question">
+                      <strong>A model needs your input</strong>
+                      <p>{current.pending_question.text}</p>
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() => void control("skip_question")}
+                      >
+                        Skip this question
+                      </button>
+                    </div>
+                  )}
+                  {!connected && (
+                    <p className="connection-status" role="status">
+                      Reconnecting to the conversation…
+                    </p>
+                  )}
+                  <div className="conversation-controls">
+                    <button
+                      className={`mode-button ${current.tools_enabled ? "enabled" : ""}`}
+                      aria-pressed={!!current.tools_enabled}
+                      disabled={busy}
+                      onClick={() =>
+                        void control("tools", {
+                          tools_enabled: !current.tools_enabled,
+                        })
+                      }
+                    >
+                      <Globe size={15} aria-hidden="true" />
+                      Web access {current.tools_enabled ? "On" : "Off"}
+                    </button>
+                    <div>
+                      {current.state === "running" ||
+                      current.state === "waiting_for_user" ? (
+                        <button
+                          disabled={busy}
+                          onClick={() => void control("pause")}
+                        >
+                          <Pause size={14} aria-hidden="true" />
+                          Pause
+                        </button>
+                      ) : ["paused", "ready"].includes(current.state) ? (
+                        <button
+                          disabled={busy}
+                          onClick={() => void control("resume")}
+                        >
+                          <Play size={14} aria-hidden="true" />
+                          Resume
+                        </button>
+                      ) : null}
+                      {current.state !== "stopped" && (
+                        <button
+                          disabled={busy}
+                          onClick={() => void control("stop")}
+                        >
+                          <Square size={13} aria-hidden="true" />
+                          Stop
+                        </button>
+                      )}
+                      {["ready", "paused", "stopped"].includes(current.state) &&
+                        !current.pending_question && (
+                          <button
+                            disabled={busy}
+                            onClick={() => void control("summary")}
+                          >
+                            Summarize
+                          </button>
+                        )}
+                    </div>
+                  </div>
+                  <ConversationComposer
+                    key={current.id}
+                    id={current.id}
+                    busy={busy}
+                    send={(text, tokens) =>
+                      control("message", { text, context_tokens: tokens })
+                    }
+                  />
+                  <p className="composer-hint">
+                    {current.state === "running"
+                      ? "Jump in anytime. Your message takes priority."
+                      : "Enter to send · Shift + Enter for a new line"}
+                  </p>
+                </div>
+              </section>
+              <aside className="conversation-roster">
+                <h2>In this conversation</h2>
+                <Roster
+                  current={current}
+                  providers={providers}
+                  busy={busy}
+                  control={control}
+                />
+                <details className="run-details">
+                  <summary>
+                    Conversation settings
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </summary>
+                  <label>
                     <input
                       type="checkbox"
                       checked={current.ask_questions}
+                      disabled={busy}
                       onChange={(e) =>
-                        control("questions", {
+                        void control("questions", {
                           ask_questions: e.target.checked,
                         })
                       }
-                      disabled={busy}
                     />
                     Ask me questions
                   </label>
-                  <div>
-                    {current.state === "running" ||
-                    current.state === "waiting_for_user" ? (
-                      <button onClick={() => control("pause")} disabled={busy}>
-                        <Pause aria-hidden="true" size={15} />
-                        Pause
-                      </button>
-                    ) : current.state === "paused" ||
-                      current.state === "ready" ? (
-                      <button onClick={() => control("resume")} disabled={busy}>
-                        <Play aria-hidden="true" size={15} />
-                        Resume
-                      </button>
-                    ) : null}
-                    {current.state !== "stopped" && (
-                      <button onClick={() => setStopping(true)} disabled={busy}>
-                        <Square aria-hidden="true" size={13} />
-                        Stop
-                      </button>
-                    )}
-                    {["ready", "paused", "stopped"].includes(current.state) &&
-                      !current.pending_question && (
-                        <button
-                          onClick={() => control("summary")}
-                          disabled={busy}
-                        >
-                          Summarize
-                        </button>
-                      )}
-                  </div>
-                </div>
-                <Composer
-                  key={current.id}
-                  conversationID={current.id}
-                  busy={busy}
-                  stopped={current.state === "stopped"}
-                  onSend={async (text, tokens) =>
-                    control("message", { text, context_tokens: tokens })
-                  }
-                />
-                <p className="composer-hint">
-                  {current.state === "running"
-                    ? "Your message will interrupt the current reply."
-                    : current.state === "stopped"
-                      ? "This conversation has stopped."
-                      : "Enter to send · Shift + Enter for a new line"}
-                </p>
-              </div>
-              </div>
-              <aside className="conversation-roster" aria-label="Conversation participants">
-                <h2>Participants <span>({current.participants.length})</span></h2>
-                <Roster current={current} providers={providers} busy={busy} control={control} />
-                <p className="roster-note">Models take turns. Unavailable models sit out until you bring them back.</p>
+                  <p>
+                    {current.attempts.length}/{current.limits.max_turns} turns
+                  </p>
+                </details>
               </aside>
             </div>
           )}
         </main>
       </div>
-      {participantsOpen && current && <Dialog title="Participants" close={() => setParticipantsOpen(false)}><Roster current={current} providers={providers} busy={busy} control={control}/></Dialog>}
-      {sourcesOpen && current && (
+      {navOpen && (
         <Dialog
-          title="Conversation sources"
-          close={() => setSourcesOpen(false)}
+          title="Navigation"
+          className="nav-dialog"
+          close={() => setNavOpen(false)}
         >
-          <div className="context-view">
-            {current.context?.length ? (
-              current.context.map((source) => (
-                <details key={source.id}>
-                  <summary>
-                    {source.name}
-                    {source.truncated ? " · excerpt" : ""}
-                  </summary>
-                  {source.url && (
-                    <a
-                      href={source.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      {source.url}
-                    </a>
-                  )}
-                  <small>Evidence {source.id}</small>
-                  <pre>{source.text}</pre>
-                </details>
-              ))
-            ) : (
+          {sidebar}
+        </Dialog>
+      )}
+      {modelsOpen && (
+        <Dialog
+          title="Choose models"
+          className="model-picker"
+          close={() => setModelsOpen(false)}
+        >
+          <ModelLibrary providers={providers} onChoose={choose} compact />
+          <div className="picker-footer">
+            <span>{draft.length} models selected</span>
+            <button
+              className="button primary"
+              onClick={() => setModelsOpen(false)}
+            >
+              Done
+            </button>
+          </div>
+        </Dialog>
+      )}
+      {optionsOpen && (
+        <Options
+          providers={providers}
+          draft={draft}
+          setDraft={setDraft}
+          ask={ask}
+          setAsk={setAsk}
+          limits={limits}
+          setLimits={setLimits}
+          close={() => setOptionsOpen(false)}
+        />
+      )}
+      {peopleOpen && current && (
+        <Dialog title="Participants" close={() => setPeopleOpen(false)}>
+          <Roster
+            current={current}
+            providers={providers}
+            busy={busy}
+            control={control}
+          />
+          <label className="question-toggle">
+            <input
+              type="checkbox"
+              checked={current.ask_questions}
+              onChange={(e) =>
+                void control("questions", { ask_questions: e.target.checked })
+              }
+            />
+            Ask me questions
+          </label>
+        </Dialog>
+      )}
+      {sourcesOpen && (
+        <Dialog title="Sources" close={() => setSourcesOpen(false)}>
+          <div className="source-drawer">
+            {!allSources.length ? (
               <p>
-                No sources yet. Attach a file or add a web page beside the
-                message field.
+                No sources yet. With web access on, models can find sources as
+                they discuss.
               </p>
+            ) : (
+              allSources.map((s) => (
+                <div key={s.id}>
+                  {s.url ? (
+                    <a href={s.url} target="_blank" rel="noopener noreferrer">
+                      {s.name}
+                      <ArrowUpRight size={14} aria-hidden="true" />
+                    </a>
+                  ) : (
+                    <strong>{s.name}</strong>
+                  )}
+                  <p>{s.url || "Attached file"}</p>
+                  <details>
+                    <summary>View excerpt</summary>
+                    <p>{s.text}</p>
+                  </details>
+                </div>
+              ))
             )}
           </div>
         </Dialog>
       )}
-      {stopping && current && (
-        <Dialog
-          title="Stop this conversation?"
-          close={() => setStopping(false)}
-        >
-          <p>
-            Replies will stop permanently. You can still export the conversation
-            or request a summary.
-          </p>
+      {deleteOpen && current && (
+        <Dialog title="Delete conversation?" close={() => setDeleteOpen(false)}>
+          <p>This deletes the conversation and its saved replies.</p>
           <div className="dialog-actions">
             <button
               className="button secondary"
-              onClick={() => setStopping(false)}
-            >
-              Keep conversation
-            </button>
-            <button
-              className="button danger"
-              disabled={busy}
-              onClick={async () => {
-                if (await control("stop")) setStopping(false);
-              }}
-            >
-              Stop conversation
-            </button>
-          </div>
-        </Dialog>
-      )}
-      {remove && current && (
-        <Dialog
-          title="Delete this conversation?"
-          close={() => setRemove(false)}
-        >
-          <p>The conversation and its replies will be deleted.</p>
-          <div className="dialog-actions">
-            <button
-              className="button secondary"
-              onClick={() => setRemove(false)}
+              onClick={() => setDeleteOpen(false)}
             >
               Keep conversation
             </button>
@@ -807,15 +1072,15 @@ export default function App() {
               className="button danger"
               disabled={busy}
               onClick={() =>
-                run(async () => {
+                void run(async () => {
                   await api(`/conversations/${current.id}`, {
                     method: "DELETE",
                   });
-                  setRemove(false);
+                  setHistory((old) => old.filter((v) => v.id !== current.id));
+                  setDeleteOpen(false);
                   history.pushState({}, "", "/");
                   setURL("");
                   setCurrent(null);
-                  await refresh();
                 })
               }
             >
@@ -827,20 +1092,234 @@ export default function App() {
     </div>
   );
 }
-function Login({ onLogin }: { onLogin: () => void }) {
-  const [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+function ConversationComposer({
+  id,
+  busy,
+  send,
+}: {
+  id: string;
+  busy: boolean;
+  send: (text: string, tokens: string[]) => Promise<boolean>;
+}) {
+  const key = "thinkpit:draft:" + id,
+    [text, setText] = useState(() => sessionStorage.getItem(key) || ""),
+    [context, setContext] = useState<PreparedEvidence[]>([]),
+    [contextBusy, setContextBusy] = useState(false);
+  useEffect(() => {
+    sessionStorage.setItem(key, text);
+  }, [text, key]);
+  async function submit() {
+    if (!text.trim() || busy || contextBusy) return;
+    if (
+      await send(
+        text,
+        context.map((c) => c.token),
+      )
+    ) {
+      setText("");
+      setContext([]);
+    }
+  }
+  // Toolbar slots and growing text follow serafimcloud/Input Bar, retrieved via 21st.dev.
   return (
-    <main className="login">
-      <div className="login-wordmark">
-        <img className="brand-mark" src="/brand/thinkpit-mark.svg" alt="" width="46" height="35" />
-        <span translate="no">ThinkPit</span>
+    <div className="conversation-composer">
+      <Textarea
+        aria-label="Your message"
+        name="message"
+        rows={2}
+        placeholder="Add your perspective…"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            void submit();
+          }
+        }}
+        maxLength={32000}
+      />
+      <div className="composer-toolbar">
+        <ContextInput
+          items={context}
+          onChange={setContext}
+          onBusy={setContextBusy}
+        />
+        <button
+          className="send-button"
+          aria-label="Send message"
+          disabled={busy || contextBusy || !text.trim()}
+          onClick={() => void submit()}
+        >
+          <ArrowUp size={17} aria-hidden="true" />
+        </button>
+      </div>
+    </div>
+  );
+}
+function Roster({
+  current,
+  providers,
+  busy,
+  control,
+}: {
+  current: Conversation;
+  providers: Provider[];
+  busy: boolean;
+  control: (
+    action: string,
+    extra?: Record<string, unknown>,
+  ) => Promise<boolean>;
+}) {
+  return (
+    <div className="participant-strip">
+      {current.participants.map((p, i) => {
+        const unavailable = current.unavailable_participants?.[p.id],
+          active =
+            i === (current.next ?? 0) &&
+            current.state === "running" &&
+            !unavailable;
+        return (
+          <div
+            className={`roster-person ${active ? "active" : ""} ${unavailable ? "unavailable" : ""}`}
+            key={p.id}
+          >
+            <Avatar name={p.name} index={i} />
+            <div>
+              <strong>{p.name}</strong>
+              <small>
+                {providers.find((v) => v.id === p.provider_id)?.name ||
+                  p.provider_id}
+              </small>
+              <span className="participant-state">
+                {unavailable
+                  ? "Sitting out"
+                  : active
+                    ? current.pending_tool_id
+                      ? "Looking things up"
+                      : current.retry_at
+                        ? "Retrying shortly"
+                        : "Responding…"
+                    : "Ready"}
+              </span>
+              {unavailable ? (
+                <>
+                  <p className="participant-error">{unavailable}</p>
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      void control("restore_model", { text: p.id })
+                    }
+                  >
+                    Bring back
+                  </button>
+                </>
+              ) : active ? (
+                <button
+                  disabled={busy}
+                  onClick={() => void control("skip_model")}
+                >
+                  Skip model
+                </button>
+              ) : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function ToolActivity({ tool }: { tool: ToolRecord }) {
+  const Icon =
+    tool.call.name === "web_search"
+      ? Search
+      : tool.call.name === "read_page"
+        ? BookOpen
+        : Clock;
+  const label =
+    tool.call.name === "web_search"
+      ? "Searched the web"
+      : tool.call.name === "read_page"
+        ? "Read a page"
+        : "Checked the time";
+  return (
+    <details className="tool-activity">
+      <summary>
+        <Icon size={14} aria-hidden="true" />
+        <span>
+          {["pending", "running"].includes(tool.status)
+            ? label
+                .replace("Searched", "Searching")
+                .replace("Read", "Reading")
+                .replace("Checked", "Checking")
+            : label}
+        </span>
+        <small>
+          {tool.call.query || tool.call.url || tool.call.timezone || "UTC"}
+        </small>
+        {tool.status === "failed" && <span>Unavailable</span>}
+        <ChevronDown size={13} aria-hidden="true" />
+      </summary>
+      <div>
+        {tool.error ? (
+          <p>{tool.error}</p>
+        ) : tool.sources?.length ? (
+          <ul>
+            {tool.sources.map((s) => (
+              <li key={s.id}>
+                <a href={s.url} target="_blank" rel="noopener noreferrer">
+                  {s.name}
+                  <ArrowUpRight size={12} aria-hidden="true" />
+                </a>
+                <p>{s.text.slice(0, 260)}</p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>{tool.result || "Waiting for a result…"}</p>
+        )}
+      </div>
+    </details>
+  );
+}
+function CopyReply({ text }: { text: string }) {
+  const [state, setState] = useState("");
+  return (
+    <button
+      className="copy-reply"
+      aria-label={state || "Copy reply"}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setState("Copied");
+        } catch {
+          setState("Copy unavailable");
+        }
+      }}
+    >
+      {state === "Copied" ? (
+        <Check size={14} aria-hidden="true" />
+      ) : (
+        <Copy size={14} aria-hidden="true" />
+      )}
+      <span className="sr-only" role="status">
+        {state}
+      </span>
+    </button>
+  );
+}
+function Login({ onLogin }: { onLogin: () => void }) {
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  return (
+    <main className="login-screen">
+      <div className="login-brand">
+        <img src="/brand/thinkpit-mark.svg" alt="" width="44" height="35" />
+        <span>ThinkPit</span>
       </div>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
-          setError("");
           const f = new FormData(e.currentTarget);
           try {
             await post("/login", {
@@ -855,16 +1334,15 @@ function Login({ onLogin }: { onLogin: () => void }) {
           }
         }}
       >
-        <h1>Welcome back.</h1>
-        <p>Your conversations are waiting.</p>
+        <h1>Welcome back</h1>
+        <p>Pick up where your ideas left off.</p>
         <label>
           Username
           <input
             name="username"
-            autoComplete="username"
             defaultValue="admin"
+            autoComplete="username"
             required
-            spellCheck={false}
           />
         </label>
         <label>
@@ -876,830 +1354,177 @@ function Login({ onLogin }: { onLogin: () => void }) {
             required
           />
         </label>
-        {error && (
-          <p role="alert" className="field-error">
-            {error}
-          </p>
-        )}
+        {error && <p role="alert">{error}</p>}
         <button className="button primary" disabled={busy}>
-          {busy ? (
-            <LoaderCircle aria-hidden="true" className="spin" size={17} />
-          ) : null}
           {busy ? "Signing in…" : "Sign in"}
         </button>
       </form>
-      <small>Self-hosted. Your space.</small>
     </main>
   );
 }
-function Composer({
-  conversationID,
-  onSend,
-  busy,
-  stopped,
-}: {
-  conversationID: string;
-  onSend: (text: string, tokens: string[]) => Promise<boolean>;
-  busy: boolean;
-  stopped: boolean;
-}) {
-  const draftKey = `thinkpit:draft:${conversationID}`;
-  const [text, setText] = useState(() => {
-    try {
-      return sessionStorage.getItem(draftKey) || "";
-    } catch {
-      return "";
-    }
-  });
-  useEffect(() => {
-    try {
-      if (text) sessionStorage.setItem(draftKey, text);
-      else sessionStorage.removeItem(draftKey);
-    } catch {
-      /* Storage may be disabled. */
-    }
-    if (!text.trim()) return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [draftKey, text]);
-  const [context, setContext] = useState<PreparedEvidence[]>([]);
-  const [contextBusy, setContextBusy] = useState(false);
-  async function submit(e?: FormEvent) {
-    e?.preventDefault();
-    if ((!text.trim() && !context.length) || busy || contextBusy || stopped) return;
-    if (
-      await onSend(
-        text || "Please consider the attached context.",
-        context.map((x) => x.token),
-      )
-    ) {
-      setText("");
-      setContext([]);
-    }
-  }
-  return (
-    <div>
-      <ContextInput items={context} onChange={setContext} onBusy={setContextBusy} />
-      <form className="composer" onSubmit={submit}>
-        <Textarea
-          name="message"
-          aria-label="Your message"
-          placeholder="Add a thought, ask a question…"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          disabled={stopped}
-          onKeyDown={(e) => {
-            if (
-              e.key === "Enter" &&
-              !e.shiftKey &&
-              !e.nativeEvent.isComposing
-            ) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          rows={2}
-        />
-        <button
-          className="send-button"
-          aria-label="Send message"
-          disabled={busy || contextBusy || stopped || (!text.trim() && !context.length)}
-        >
-          {busy ? (
-            <LoaderCircle aria-hidden="true" className="spin" size={18} />
-          ) : (
-            <ArrowUp aria-hidden="true" size={20} />
-          )}
-        </button>
-      </form>
-    </div>
-  );
-}
-function NewConversation({
-  context,
-  setContext,
-  participants,
-  setParticipants,
-  chooseModel,
+function Options({
   providers,
-  create,
-  busy,
+  draft,
+  setDraft,
+  ask,
+  setAsk,
+  limits,
+  setLimits,
+  close,
 }: {
   providers: Provider[];
-  context: PreparedEvidence[];
-  setContext: (context: PreparedEvidence[]) => void;
-  participants: Participant[];
-  setParticipants: React.Dispatch<React.SetStateAction<Participant[]>>;
-  chooseModel: (provider: Provider, model: Model) => void;
-  create: (body: unknown) => Promise<void>;
-  busy: boolean;
+  draft: Participant[];
+  setDraft: React.Dispatch<React.SetStateAction<Participant[]>>;
+  ask: boolean;
+  setAsk: (v: boolean) => void;
+  limits: Conversation["limits"];
+  setLimits: (v: Conversation["limits"]) => void;
+  close: () => void;
 }) {
-  const [topic, setTopic] = useState(()=>{try{return sessionStorage.getItem("thinkpit:topic")||""}catch{return ""}}),
-    [ask, setAsk] = useState(true),
-    [error, setError] = useState(""),
-    [turns, setTurns] = useState(24),
-    [tokens, setTokens] = useState(150000),
-    [output, setOutput] = useState(1024),
-    [setups, setSetups] = useState<Setup[]>([]),
-    [setupName, setSetupName] = useState(""),
-    [setupNotice, setSetupNotice] = useState(""),
-    [contextBusy, setContextBusy] = useState(false),
-    [modelsOpen, setModelsOpen] = useState(false);
+  const [setups, setSetups] = useState<Setup[]>([]),
+    [name, setName] = useState(""),
+    [notice, setNotice] = useState("");
   useEffect(() => {
     api<Setup[]>("/setups")
       .then(setSetups)
       .catch(() => {});
   }, []);
-  useEffect(()=>{try{sessionStorage.setItem("thinkpit:topic",topic)}catch{};if(!topic.trim()&&!participants.length&&!context.length)return;const warn=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue=""};window.addEventListener("beforeunload",warn);return()=>window.removeEventListener("beforeunload",warn)},[topic,participants,context]);
-  async function saveSetup() {
-    setError("");
-    try {
-      const saved = await api<Setup>(`/setups/${id()}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          name: setupName,
-          participants,
-          ask_questions: ask,
-          limits: {
-            max_turns: turns,
-            max_tokens: tokens,
-            max_output_tokens: output,
-          },
-        }),
-      });
-      setSetups((old) => [saved, ...old]);
-      setSetupName("");
-      setSetupNotice("Setup saved.");
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
-  function add() {
-    const p = providers[0];
-    if (!p) return;
-    setParticipants((old) => [
-      ...old,
-      {
-        id: id(),
-        name: `Participant ${old.length + 1}`,
-        provider_id: p.id,
-        model: p.id === "pollinations" ? "openai-fast" : "",
-        instructions: "",
-      },
-    ]);
-  }
-  function change(index: number, patch: Partial<Participant>) {
-    setParticipants((old) =>
-      old.map((p, i) => (i === index ? { ...p, ...patch } : p)),
-    );
-  }
   return (
-    <div className="setup-workbench">
-      <div className="new-conversation">
-        <h1>A better answer starts<br />with another perspective.</h1>
-        <p className="intro">
-          Choose who joins the discussion. You can step in at any time.
-        </p>
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (!participants.length) {
-              setError("Add a participant to start.");
-              return;
-            }
-            const missing=participants.find(p=>{const provider=providers.find(v=>v.id===p.provider_id);return provider&&!provider.has_key&&['api.openai.com','api.anthropic.com','openrouter.ai'].includes(new URL(provider.base_url).hostname)});
-            if(missing){setError(`Add an API key for ${providers.find(p=>p.id===missing.provider_id)?.name} in Providers before starting.`);return}
-            setError("");
-            await create({
-              topic,
-              context_tokens: context.map((x) => x.token),
-              ask_questions: ask,
-              participants,
-              limits: {
-                max_turns: turns,
-                max_tokens: tokens,
-                max_output_tokens: output,
-              },
-            });
-          }}
-        >
-          <div className="topic-field">
-            <Textarea
-              aria-label="Conversation topic"
-              name="topic"
-              placeholder="An idea to explore, a decision to make…"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              rows={3}
-              required
-              maxLength={32000}
-            />
-          </div>
-          <ContextInput items={context} onChange={setContext} onBusy={setContextBusy} />
-          <div className="topic-starters" aria-label="Topic starters">
-            {[
-              "Pressure-test an idea",
-              "Compare my options",
-              "Explore a question",
-            ].map((label, i) => (
-              <button
-                type="button"
-                key={label}
-                onClick={() =>
-                  setTopic(
-                    [
-                      "Help me pressure-test this idea: ",
-                      "Help me compare these options: ",
-                      "I’d like to explore this question: ",
-                    ][i],
-                  )
-                }
-              >
-                {label}
-                <ArrowUpRight aria-hidden="true" size={14} />
-              </button>
-            ))}
-          </div>
-          {setups.length > 0 && (
-            <label className="saved-setups">
-              Use a saved setup
-              <select
-                name="saved-setup"
-                defaultValue=""
-                onChange={(e) => {
-                  const setup = setups.find((s) => s.id === e.target.value);
-                  if (setup) {
-                    setParticipants(
-                      setup.participants.map((p) => ({ ...p, id: id() })),
-                    );
-                    setAsk(setup.ask_questions);
-                    setTurns(setup.limits.max_turns);
-                    setTokens(setup.limits.max_tokens);
-                    setOutput(setup.limits.max_output_tokens);
-                    setSetupNotice(`Loaded ${setup.name}.`);
-                  }
-                }}
-              >
-                <option value="">Choose a setup…</option>
-                {setups.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <section
-            className="participants-setup"
-            aria-labelledby="participants-title"
-          >
-            <header>
-              <h2 id="participants-title">At the table</h2>
-              <button type="button" className="button secondary browse-models" onClick={() => setModelsOpen(true)}><Shapes aria-hidden="true" size={16} />Browse models</button>
-              {providers.length > 0 && (
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={add}
-                  disabled={participants.length >= 64}
-                >
-                  <Plus aria-hidden="true" size={15} />
-                  Add participant
-                </button>
-              )}
-            </header>
-            {providers.length === 0 ? (
-              <div className="provider-empty">
-                <p>Connect a provider to invite your first model.</p>
-                <Link className="button secondary" href="/?view=providers">
-                  Set up a provider <ArrowUp aria-hidden="true" size={15} />
-                </Link>
-              </div>
-            ) : participants.length === 0 ? (
-              <button className="participant-add" type="button" onClick={add}>
-                <Plus aria-hidden="true" size={20} />
-                <span>
-                  Add your first participant
-                  <small>You can use the same model more than once.</small>
-                </span>
-              </button>
-            ) : (
-              participants.map((p, index) => (
-                <div className="participant-editor" key={p.id}>
-                  <div className="participant-fields">
-                    <Seal name={p.name || "P"} index={index} />
-                    <label className="name-field">
-                      <span className="sr-only">Participant name</span>
-                      <input
-                        aria-label={`Participant ${index + 1} name`}
-                        autoComplete="off"
-                        name={`name-${p.id}`}
-                        value={p.name}
-                        onChange={(e) =>
-                          change(index, { name: e.target.value })
-                        }
-                        placeholder="Name…"
-                        maxLength={128}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      className="icon-button"
-                      aria-label={`Remove participant ${index + 1}`}
-                      onClick={() =>
-                        setParticipants((old) =>
-                          old.filter((x) => x.id !== p.id),
-                        )
-                      }
-                    >
-                      <X aria-hidden="true" size={17} />
-                    </button>
-                  </div>
-                  <div className="model-fields">
-                    <label>
-                      Provider
-                      <select
-                        value={p.provider_id}
-                        onChange={(e) => {
-                          const provider = providers.find(
-                            (x) => x.id === e.target.value,
-                          );
-                          change(index, {
-                            provider_id: e.target.value,
-                            model:
-                              provider?.id === "pollinations"
-                                ? "openai-fast"
-                                : "",
-                          });
-                        }}
-                      >
-                        {providers.map((provider) => (
-                          <option key={provider.id} value={provider.id}>
-                            {provider.name || provider.id}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <ModelSelect provider={providers.find(v=>v.id===p.provider_id)} name={`model-${p.id}`} value={p.model} onChange={model=>change(index,{model})} />
-                  </div>
-                  <details>
-                    <summary>
-                      Instructions <span>optional</span>
-                      <ChevronDown aria-hidden="true" size={14} />
-                    </summary>
-                    <Textarea
-                      aria-label={`Instructions for participant ${index + 1}`}
-                      name={`instructions-${p.id}`}
-                      placeholder="A perspective or approach…"
-                      value={p.instructions}
-                      onChange={(e) =>
-                        change(index, { instructions: e.target.value })
-                      }
-                      maxLength={8000}
-                      rows={2}
-                    />
-                  </details>
-                </div>
-              ))
-            )}
-          </section>
-          <div className="setup-footer">
-            <label className="question-toggle">
-              <input
-                name="ask_questions"
-                type="checkbox"
-                checked={ask}
-                onChange={(e) => setAsk(e.target.checked)}
-              />
-              Ask me questions
-            </label>
-            <button
-              className="button primary"
-              disabled={busy || contextBusy || providers.length === 0}
-            >
-              {busy ? (
-                <LoaderCircle aria-hidden="true" className="spin" size={16} />
-              ) : (
-                <ArrowUp aria-hidden="true" size={17} />
-              )}{" "}
-              {busy ? "Starting…" : "Start conversation"}
-            </button>
-          </div>
-          {error && (
-            <p role="alert" className="field-error">
-              {error}
-            </p>
-          )}
-          <details className="limits-settings">
-            <summary>
-              Run settings
-              <ChevronDown aria-hidden="true" size={14} />
-            </summary>
-            <label>
-              Maximum turns
-              <input
-                name="max-turns"
-                type="number"
-                min={1}
-                max={1000}
-                value={turns}
-                onChange={(e) => setTurns(Number(e.target.value))}
-                required
-              />
-            </label>
-            <label>
-              Token budget
-              <input
-                name="token-budget"
-                type="number"
-                min={256}
-                max={10000000}
-                required
-                value={tokens}
-                onChange={(e) => setTokens(Number(e.target.value))}
-              />
-            </label>
-            <label>
-              Maximum output per reply
-              <input
-                name="reply-tokens"
-                type="number"
-                min={64}
-                max={8192}
-                required
-                value={output}
-                onChange={(e) => setOutput(Number(e.target.value))}
-              />
-            </label>
-          </details>
-          {setups.length > 0 && (
-            <details className="manage-setups">
-              <summary>Manage saved setups</summary>
-              {setups.map((setup) => (
-                <div key={setup.id}>
-                  <span>{setup.name}</span>
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={async () => {
-                      if (!window.confirm(`Delete ${setup.name}?`)) return;
-                      try {
-                        await api(`/setups/${setup.id}`, { method: "DELETE" });
-                        setSetups((old) =>
-                          old.filter((x) => x.id !== setup.id),
-                        );
-                      } catch (e) {
-                        setError((e as Error).message);
-                      }
-                    }}
-                  >
-                    Delete<span className="sr-only"> {setup.name}</span>
-                  </button>
-                </div>
-              ))}
-            </details>
-          )}
-          {participants.length > 0 && (
-            <div className="save-setup">
-              <label>
-                Save these participants
-                <input
-                  name="setup-name"
-                  autoComplete="off"
-                  placeholder="Setup name…"
-                  value={setupName}
-                  maxLength={128}
-                  onChange={(e) => setSetupName(e.target.value)}
-                />
-              </label>
-              <button
-                type="button"
-                className="button secondary"
-                disabled={!setupName.trim()}
-                onClick={saveSetup}
-              >
-                Save setup
-              </button>
-            </div>
-          )}
-          <p role="status" className="setup-notice">
-            {setupNotice}
-          </p>
-        </form>
-      </div>
-      {modelsOpen && <Dialog title="Choose models" className="model-picker" close={() => setModelsOpen(false)}>
-        <ModelLibrary providers={providers} onChoose={chooseModel} compact />
-        <div className="picker-footer"><span>{participants.length} participants selected</span><button type="button" className="button primary" onClick={() => setModelsOpen(false)}>Done choosing models</button></div>
-      </Dialog>}
-    </div>
-  );
-}
-function Providers({
-  providers,
-  refresh,
-}: {
-  providers: Provider[];
-  refresh: () => Promise<void>;
-}) {
-  const [editing, setEditing] = useState<Provider | null>(null),
-    [open, setOpen] = useState(false),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [saved, setSaved] = useState(false),
-    [kind, setKind] = useState<Provider["kind"]>("openai_compat");
-  async function free() {
-    setBusy(true);
-    setError("");
-    try {
-      await api("/providers/pollinations", {
-        method: "PUT",
-        body: JSON.stringify({
-          name: "Pollinations",
-          kind: "openai_compat",
-          base_url: "https://text.pollinations.ai",
-          endpoint_path: "/openai",
-          api_key: "",
-        }),
-      });
-      await refresh();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <div className="provider-page">
-      <Link href="/" className="back-link">
-        <ArrowLeft aria-hidden="true" size={16} />
-        New conversation
-      </Link>
-      <h1>Your providers.</h1>
-      <p className="intro">Choose where your models come from.</p>
-      <div className="provider-shortcuts" aria-label="Provider shortcuts">
-        {[
-          {
-            id: "openrouter",
-            name: "OpenRouter",
-            kind: "openai_compat",
-            base_url: "https://openrouter.ai/api/v1",
-          },
-          {
-            id: "openai",
-            name: "OpenAI",
-            kind: "openai_compat",
-            base_url: "https://api.openai.com/v1",
-          },
-          {
-            id: "anthropic",
-            name: "Anthropic",
-            kind: "anthropic",
-            base_url: "https://api.anthropic.com/v1",
-          },
-          {
-            id: "ollama",
-            name: "Ollama",
-            kind: "openai_compat",
-            base_url: "http://host.docker.internal:11434/v1",
-          },
-        ].map((p) => (
-          <button
-            type="button"
-            key={p.id}
-            onClick={() => {
-              setEditing(
-                providers.find((x) => x.id === p.id) || {
-                  ...p,
-                  kind: p.kind as Provider["kind"],
-                  has_key: false,
-                },
-              );
-              setKind(p.kind as Provider["kind"]);
-              setOpen(true);
-              setSaved(false);
-            }}
-          >
+    <Dialog title="Conversation options" close={close}>
+      <label className="question-toggle">
+        <input
+          type="checkbox"
+          checked={ask}
+          onChange={(e) => setAsk(e.target.checked)}
+        />
+        Let models ask me questions
+      </label>
+      {draft.map((p, i) => (
+        <details className="participant-option" key={p.id}>
+          <summary>
+            <Avatar name={p.name} index={i} />
             {p.name}
-            <ArrowUpRight aria-hidden="true" size={15} />
-          </button>
+            <ChevronDown size={14} aria-hidden="true" />
+          </summary>
+          <label>
+            Display name
+            <input
+              value={p.name}
+              maxLength={128}
+              onChange={(e) =>
+                setDraft((old) =>
+                  old.map((v) =>
+                    v.id === p.id ? { ...v, name: e.target.value } : v,
+                  ),
+                )
+              }
+            />
+          </label>
+          <label>
+            Instructions <span>optional</span>
+            <Textarea
+              value={p.instructions || ""}
+              maxLength={8000}
+              onChange={(e) =>
+                setDraft((old) =>
+                  old.map((v) =>
+                    v.id === p.id ? { ...v, instructions: e.target.value } : v,
+                  ),
+                )
+              }
+            />
+          </label>
+          <p>
+            {providers.find((v) => v.id === p.provider_id)?.name} · {p.model}
+          </p>
+        </details>
+      ))}
+      <details className="limits-settings">
+        <summary>
+          Discussion length
+          <ChevronDown size={14} aria-hidden="true" />
+        </summary>
+        {[
+          ["max_turns", "Maximum turns", 1, 1000],
+          ["max_tokens", "Token budget", 1, 10000000],
+          ["max_output_tokens", "Maximum reply length", 64, 8192],
+        ].map(([key, label, min, max]) => (
+          <label key={key}>
+            {label}
+            <input
+              type="number"
+              min={Number(min)}
+              max={Number(max)}
+              value={limits[key as keyof typeof limits]}
+              onChange={(e) =>
+                setLimits({ ...limits, [key]: Number(e.target.value) })
+              }
+            />
+          </label>
         ))}
-      </div>
-      <div className="provider-list">
-        {providers.map((p) => (
-          <div className="provider-row" key={p.id}>
-            <div className="provider-initial" aria-hidden="true">
-              {(p.name || p.id).slice(0, 1)}
-            </div>
-            <div>
-              <strong>{p.name || p.id}</strong>
-              <small>{new URL(p.base_url).host}</small>
-              <ProviderModels provider={p}/>
-            </div>
-            <span className="key-status">
-              {p.has_key ? (
-                <>
-                  <Check aria-hidden="true" size={14} />
-                  Key saved
-                </>
-              ) : (
-                "No key saved"
-              )}
-            </span>
-            <button
-              className="text-button"
-              onClick={() => {
-                setEditing(p);
-                setKind(p.kind);
-                setOpen(true);
-                setSaved(false);
-              }}
-            >
-              Edit<span className="sr-only"> {p.name || p.id}</span>
-            </button>
-          </div>
-        ))}
-      </div>
-      {!open && (
-        <div className="provider-add-actions">
-          <button
-            className="button secondary"
-            onClick={() => {
-              setEditing(null);
-              setKind("openai_compat");
-              setOpen(true);
-              setSaved(false);
+      </details>
+      {setups.length > 0 && (
+        <label>
+          Saved groups
+          <select
+            defaultValue=""
+            onChange={(e) => {
+              const s = setups.find((s) => s.id === e.target.value);
+              if (s) {
+                setDraft(s.participants.map((p) => ({ ...p, id: uid() })));
+                setAsk(s.ask_questions);
+                setLimits(s.limits);
+              }
             }}
           >
-            <Plus aria-hidden="true" size={17} />
-            Add provider
-          </button>
-          {!providers.some((p) => p.id === "pollinations") && (
-            <button className="text-button" onClick={free} disabled={busy}>
-              Try Pollinations — no key
-            </button>
-          )}
-        </div>
+            <option value="">Choose a saved group…</option>
+            {setups.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
-      {open && (
-        <form
-          key={editing?.id || "new"}
-          className="provider-form"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setBusy(true);
-            setError("");
-            const data = new FormData(e.currentTarget),
-              key = String(data.get("api_key") || ""),
-              body: Record<string, unknown> = {
-                name: data.get("name"),
-                kind,
-                base_url: data.get("base_url"),
-                endpoint_path: data.get("endpoint_path"),
-              };
-            if (key || !editing || data.get("remove_key")) body.api_key = key;
+      <div className="save-setup">
+        <label>
+          Save this model group
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Group name…"
+            maxLength={128}
+          />
+        </label>
+        <button
+          className="button secondary"
+          disabled={!name.trim() || !draft.length}
+          onClick={async () => {
             try {
-              clearCatalogs();
-              await api(`/providers/${editing?.id || id()}`, {
+              const s = await api<Setup>(`/setups/${uid()}`, {
                 method: "PUT",
-                body: JSON.stringify(body),
+                body: JSON.stringify({
+                  name,
+                  participants: draft,
+                  ask_questions: ask,
+                  limits,
+                }),
               });
-              setOpen(false);
-              setSaved(true);
-              await refresh();
+              setSetups((old) => [s, ...old]);
+              setName("");
+              setNotice("Group saved.");
             } catch (e) {
-              setError((e as Error).message);
-            } finally {
-              setBusy(false);
+              setNotice((e as Error).message);
             }
           }}
         >
-          <header>
-            <h2>{editing ? "Edit provider" : "Add provider"}</h2>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => setOpen(false)}
-              aria-label="Cancel provider changes"
-            >
-              <X aria-hidden="true" size={17} />
-            </button>
-          </header>
-          <label>
-            Name
-            <input
-              name="name"
-              required
-              defaultValue={editing?.name || ""}
-              placeholder="OpenRouter, local server…"
-              autoComplete="off"
-              maxLength={128}
-            />
-          </label>
-          <label>
-            API type
-            <select
-              name="kind"
-              value={kind}
-              onChange={(e) => setKind(e.target.value as Provider["kind"])}
-            >
-              <option value="openai_compat">OpenAI-compatible</option>
-              <option value="anthropic">Anthropic</option>
-            </select>
-          </label>
-          <label>
-            Base URL
-            <input
-              name="base_url"
-              type="url"
-              defaultValue={
-                editing?.base_url ||
-                (kind === "anthropic" ? "https://api.anthropic.com/v1" : "")
-              }
-              key={kind}
-              placeholder="https://openrouter.ai/api/v1…"
-              autoComplete="off"
-              spellCheck={false}
-              required
-            />
-          </label>
-          <label>
-            API key{" "}
-            {editing?.has_key && (
-              <small>Leave blank to keep the saved key.</small>
-            )}
-            <input
-              name="api_key"
-              type="password"
-              placeholder="Optional for local and free endpoints…"
-              autoComplete="new-password"
-            />
-          </label>
-          {editing?.has_key && (
-            <label className="question-toggle">
-              <input type="checkbox" name="remove_key" />
-              Remove saved key
-            </label>
-          )}
-          <details>
-            <summary>
-              Custom endpoint
-              <ChevronDown aria-hidden="true" size={14} />
-            </summary>
-            <label>
-              Endpoint path
-              <input
-                name="endpoint_path"
-                defaultValue={editing?.endpoint_path || ""}
-                placeholder="/chat/completions…"
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
-          </details>
-          <button className="button primary" disabled={busy}>
-            {busy ? (
-              <LoaderCircle aria-hidden="true" className="spin" size={16} />
-            ) : null}
-            {busy ? "Saving…" : "Save provider"}
-          </button>
-        </form>
-      )}
-      {error && (
-        <p className="field-error" role="alert">
-          {error} Check the provider details and try again.
-        </p>
-      )}
-      {saved && (
-        <p className="saved-note" role="status">
-          <Check aria-hidden="true" size={16} />
-          Provider saved.
-        </p>
-      )}
-      <p className="provider-note">
-        Conversation context is sent to the providers you choose.
-      </p>
-    </div>
+          Save group
+        </button>
+      </div>
+      <p role="status">{notice}</p>
+      <button className="button primary" onClick={close}>
+        Done
+      </button>
+    </Dialog>
   );
-}
-
-function Roster({current,providers,busy,control}:{current:Conversation;providers:Provider[];busy:boolean;control:(action:string,extra?:Record<string,unknown>)=>Promise<boolean>}) {
- return <div className="participant-strip">{current.participants.map((p,i)=>{
- const unavailable=current.unavailable_participants?.[p.id];
- const next=i===(current.next??0);
- const active=next&&current.state==="running"&&!unavailable;
- return <div className={`roster-person ${unavailable?"unavailable":active?"active":""}`} key={p.id}>
- <Seal name={p.name} index={i}/><div className="roster-person-detail"><strong>{p.name}</strong><small>{p.model}</small><small>{providers.find(v=>v.id===p.provider_id)?.name||p.provider_id}</small><span className="participant-state">{unavailable?"Sitting out":active?(current.retry_at?"Retrying shortly":"Responding…"):next?"Up next":"Ready"}</span>
- {unavailable?<><p className="participant-error">{unavailable}</p><button className="text-button" disabled={busy} onClick={()=>control("restore_model",{text:p.id})}>Bring back</button></>:active?<button className="text-button" disabled={busy} onClick={()=>control("skip_model")}>Skip model</button>:null}
- </div></div>
- })}</div>
-}
-
-function CopyReply({text}:{text:string}) {
- const [state,setState]=useState("");
- return <button className="copy-reply" aria-label={state||"Copy reply"} title={state||"Copy reply"} onClick={async()=>{try{await navigator.clipboard.writeText(text);setState("Copied")}catch{setState("Copy failed; select the text instead")}}}>{state==="Copied"?<Check size={14} aria-hidden="true"/>:<Copy size={14} aria-hidden="true"/>}<span className="sr-only" role="status">{state}</span></button>
 }

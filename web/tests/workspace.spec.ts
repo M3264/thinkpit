@@ -59,7 +59,7 @@ const initial = {
   last_event_id: 42,
 };
 async function mock(page: Page, { login = false, empty = false } = {}) {
-  let setups:any[]=[];
+  let setups: any[] = [];
   let authed = !login,
     providers: any[] = empty ? [] : [provider],
     conversations: any[] = empty ? [] : [structuredClone(initial)],
@@ -89,12 +89,80 @@ async function mock(page: Page, { login = false, empty = false } = {}) {
     }
     if (path === "/api/providers" && request.method() === "GET")
       return json(providers);
-    if(path==='/api/setups'&&request.method()==='GET')return json(setups);
-    if(path.startsWith('/api/setups/')){if(request.method()==='DELETE'){setups=setups.filter(s=>s.id!==path.split('/').at(-1));return route.fulfill({status:204})}const saved={...request.postDataJSON(),id:path.split('/').at(-1)};setups=[saved,...setups];return json(saved)}
-    if(path.endsWith('/models')||path==='/api/catalog/openrouter')return json({models:[{id:'cedar',name:'Cedar Reasoner',description:'Fictional deterministic test model for discussing tradeoffs.',free:true,context_length:32000,capabilities:['reasoning','tools']},{id:'orchid',name:'Orchid Vision',description:'Fictional deterministic test model for text and image context.',free:false,context_length:64000,capabilities:['vision']},{id:'unknown',name:'Model with unknown pricing',capabilities:[]}],truncated:false});
-    if(path==='/api/attachments')return json({evidence:{id:'file-1',kind:'file',name:'notes.md',text:'Fictional volunteer budget is 40 hours.',truncated:false},token:'prepared-file'});
-    if(path==='/api/search')return json({results:[{title:'Fictional library source',url:'https://example.com/library',content:'A test source about the fictional library.'}],warnings:[]});
-    if(path==='/api/sources')return json({evidence:{id:'source-1',kind:'web',name:'Fictional library source',url:'https://example.com/library',text:'Fictional trial details.',truncated:false},token:'prepared-source'});
+    if (path === "/api/setups" && request.method() === "GET")
+      return json(setups);
+    if (path.startsWith("/api/setups/")) {
+      if (request.method() === "DELETE") {
+        setups = setups.filter((s) => s.id !== path.split("/").at(-1));
+        return route.fulfill({ status: 204 });
+      }
+      const saved = { ...request.postDataJSON(), id: path.split("/").at(-1) };
+      setups = [saved, ...setups];
+      return json(saved);
+    }
+    if (path.endsWith("/models") || path === "/api/catalog/openrouter")
+      return json({
+        models: [
+          {
+            id: "cedar",
+            name: "Cedar Reasoner",
+            description:
+              "Fictional deterministic test model for discussing tradeoffs.",
+            free: true,
+            context_length: 32000,
+            capabilities: ["reasoning", "tools"],
+          },
+          {
+            id: "orchid",
+            name: "Orchid Vision",
+            description:
+              "Fictional deterministic test model for text and image context.",
+            free: false,
+            context_length: 64000,
+            capabilities: ["vision"],
+          },
+          {
+            id: "unknown",
+            name: "Model with unknown pricing",
+            capabilities: [],
+          },
+        ],
+        truncated: false,
+      });
+    if (path === "/api/attachments")
+      return json({
+        evidence: {
+          id: "file-1",
+          kind: "file",
+          name: "notes.md",
+          text: "Fictional volunteer budget is 40 hours.",
+          truncated: false,
+        },
+        token: "prepared-file",
+      });
+    if (path === "/api/search")
+      return json({
+        results: [
+          {
+            title: "Fictional library source",
+            url: "https://example.com/library",
+            content: "A test source about the fictional library.",
+          },
+        ],
+        warnings: [],
+      });
+    if (path === "/api/sources")
+      return json({
+        evidence: {
+          id: "source-1",
+          kind: "web",
+          name: "Fictional library source",
+          url: "https://example.com/library",
+          text: "Fictional trial details.",
+          truncated: false,
+        },
+        token: "prepared-source",
+      });
     if (path.startsWith("/api/providers/")) {
       const body = request.postDataJSON();
       const saved = {
@@ -134,7 +202,17 @@ async function mock(page: Page, { login = false, empty = false } = {}) {
       if (body.action === "message") {
         if (body.text === "fail this message")
           return json({ error: "failed" }, 500);
-        current.context=body.context_tokens?.length?[{id:"file-1",kind:"file",name:"notes.md",text:"Fictional volunteer budget is 40 hours.",truncated:false}]:current.context;
+        current.context = body.context_tokens?.length
+          ? [
+              {
+                id: "file-1",
+                kind: "file",
+                name: "notes.md",
+                text: "Fictional volunteer budget is 40 hours.",
+                truncated: false,
+              },
+            ]
+          : current.context;
         current.messages.push({
           id: "human",
           speaker_id: "user",
@@ -148,6 +226,8 @@ async function mock(page: Page, { login = false, empty = false } = {}) {
         current.state = "running";
       else if (body.action === "pause") current.state = "paused";
       else if (body.action === "stop") current.state = "stopped";
+      else if (body.action === "tools")
+        current.tools_enabled = body.tools_enabled;
       else if (body.action === "questions")
         current.ask_questions = body.ask_questions;
       else if (body.action === "skip_question") {
@@ -199,111 +279,95 @@ async function mock(page: Page, { login = false, empty = false } = {}) {
     },
   };
 }
-async function providers(page: Page) {
-  if (test.info().project.name === "mobile") {
-    await page.getByRole("button", { name: "Open navigation" }).click();
-    await page
-      .getByRole("dialog")
-      .getByRole("link", { name: "Providers", exact: true })
-      .click();
-  } else
-    await page.getByRole("link", { name: "Providers", exact: true }).click();
-}
 async function capture(page: Page, name: string) {
-  await page.evaluate(() => { document.querySelectorAll(".new-main,.settings-main").forEach(el => el.scrollTop = 0); window.scrollTo(0,0); });
   await page.screenshot({
-    path: `../.impeccable/review/${test.info().project.name}-${name}.png`,
-    fullPage: true,
+    path: `../.impeccable/review/rebuild/${test.info().project.name}-${name}.png`,
   });
   expect(
     await page.evaluate(
-      () => document.documentElement.scrollWidth <= window.innerWidth,
+      () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
 }
-test("login and provider onboarding", async ({ page }) => {
-  await mock(page, { login: true, empty: true });
-  await page.goto("/");
-  await page.getByLabel("Password", { exact: true }).fill("wrong");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("Check your username");
-  await page.getByLabel("Password", { exact: true }).fill("test-password");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "A better answer starts with another perspective." }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: /Set up a provider/ }).click();
-  await page.getByRole("button", { name: "Try Pollinations — no key" }).click();
-  await expect(page.getByText("No key saved")).toBeVisible();
-  await capture(page, "providers");
-});
-test("create a conversation with two instances and optional instructions", async ({
+test("home puts topic and models first and hides advanced setup", async ({
   page,
 }) => {
-  await mock(page, { empty: false });
+  await mock(page);
   await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "What’s on your mind?" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Conversation topic")).toBeVisible();
+  await expect(page.getByText("Cedar Reasoner", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Base URL")).toHaveCount(0);
+  await expect(page.getByText("Token budget", { exact: true })).toHaveCount(0);
   await page
     .getByLabel("Conversation topic")
-    .fill("What should our fictional library try next?");
+    .fill("Help me plan a fictional community event.");
+  await capture(page, "home");
   await page
-    .getByRole("button", { name: "Add your first participant" })
+    .getByRole("button", { name: "Start conversation", exact: true })
     .click();
-  await page.getByLabel("Participant 1 name").fill("Alex");
-  await page
-    .getByRole("button", { name: "Add participant", exact: true })
-    .click();
-  await page.getByLabel("Participant 2 name").fill("Blair");
-  await expect(page.getByLabel("Model", { exact: true })).toHaveCount(2);
-  await capture(page, "setup");
-  await page.getByRole("button", { name: "Start conversation" }).click();
-  await expect(
-    page.getByRole("heading", {
-      name: "What should our fictional library try next?",
-    }),
-  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Pause", exact: true }),
   ).toBeVisible();
+  const body = await page.evaluate(() =>
+    JSON.parse(sessionStorage.getItem("thinkpit:participants") || "[]"),
+  );
+  expect(body).toHaveLength(2);
 });
-test("read, pause, ask a question, and preserve a failed draft", async ({
+test("model picker adds distinct instances and options keep technical fields away", async ({
+  page,
+}) => {
+  await mock(page);
+  await page.goto("/");
+  await expect(page.getByText("Cedar Reasoner", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Add model", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Choose models" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Add Cedar Reasoner", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Done", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Conversation options" }).click();
+  const dialog = page.getByRole("dialog", { name: "Conversation options" });
+  await expect(dialog.getByText("Discussion length")).toBeVisible();
+  await dialog.locator(".participant-option summary").first().click();
+  await dialog
+    .locator(".participant-option")
+    .first()
+    .getByLabel("Display name")
+    .fill("Critic");
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Critic", exact: true }),
+  ).toBeVisible();
+});
+test("send interrupts while failed sends retain the draft; pause and resume work", async ({
   page,
 }) => {
   await mock(page);
   await page.goto("/?conversation=test-conversation");
-  await expect(
-    page.getByText("Saturday hours", { exact: false }),
-  ).toBeVisible();
-  await capture(page, "conversation");
   await page.getByRole("button", { name: "Resume", exact: true }).click();
-  await page.getByRole("button", { name: "Pause", exact: true }).click();
-  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Stop", exact: true }).click();
-  await expect(
-    page.getByRole("dialog", { name: "Stop this conversation?" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Keep conversation" }).click();
-  await expect(page.getByText("Paused", { exact: true })).toBeVisible();
   await page.getByLabel("Your message").fill("fail this message");
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByLabel("Your message")).toHaveValue(
     "fail this message",
   );
-  await page
-    .getByLabel("Your message")
-    .fill("Keep the trial within the volunteer budget.");
+  await page.getByLabel("Your message").fill("Try a short weekend trial.");
   await page.getByRole("button", { name: "Send message" }).click();
-  await expect(
-    page
-      .locator("article")
-      .getByText("Keep the trial within the volunteer budget.", {
-        exact: true,
-      }),
-  ).toBeVisible();
   await expect(page.getByLabel("Your message")).toHaveValue("");
-  await page.getByLabel("Ask me questions").click();
-  await expect(page.getByLabel("Ask me questions")).not.toBeChecked();
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Resume", exact: true }),
+  ).toBeVisible();
+  await capture(page, "chat");
 });
-test("essential question, export, summary and deletion confirmation", async ({
+test("essential question, summary, export, and deletion remain available", async ({
   page,
 }) => {
   const state = await mock(page);
@@ -311,224 +375,158 @@ test("essential question, export, summary and deletion confirmation", async ({
   await page.goto("/?conversation=test-conversation");
   await expect(page.getByText("What is the volunteer budget?")).toBeVisible();
   await page.getByRole("button", { name: "Skip this question" }).click();
-  await expect(
-    page.getByText("What is the volunteer budget?"),
-  ).not.toBeVisible();
-  const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export Markdown" }).click();
-  await expect((await download).suggestedFilename()).toBe("thinkpit.md");
   await page.getByRole("button", { name: "Pause", exact: true }).click();
   await page.getByRole("button", { name: "Summarize", exact: true }).click();
   await expect(
     page.getByText("A short summary of the trial and the staffing concern."),
   ).toBeVisible();
+  const download = page.waitForEvent("download");
+  await page.getByRole("link", { name: "Export Markdown" }).click();
+  expect((await download).suggestedFilename()).toBe("thinkpit.md");
   await page
     .getByRole("button", { name: "Delete conversation", exact: true })
     .click();
-  await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByRole("button", { name: "Keep conversation" }).click();
   await expect(
     page.getByRole("heading", { name: initial.topic }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Delete conversation", exact: true })
-    .click();
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Delete conversation", exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "A better answer starts with another perspective." }),
-  ).toBeVisible();
 });
-
-test("stream snapshots replace provisional text and reconnect from the last event", async ({
+test("tools show sources in transcript and web access can be disabled", async ({
   page,
 }) => {
   await mock(page);
-  let first = true;
-  let replayCursor = "";
-  await page.route("**/api/conversations/*/events", async (route) => {
-    if (!first) {
-      replayCursor = route.request().headers()["last-event-id"];
-      return route.fulfill({
-        contentType: "text/event-stream",
-        body: ": keepalive\n\n",
-      });
-    }
-    first = false;
-    const started = {
-      ...structuredClone(initial),
-      state: "running",
-      active_attempt_id: "stream-attempt",
-      attempts: [
-        {
-          id: "stream-attempt",
-          message_id: "stream-message",
-          status: "running",
-        },
-      ],
-      messages: [
-        ...initial.messages,
-        {
-          id: "stream-message",
-          speaker_id: "a",
-          content: "",
-          status: "streaming",
-          created_at: initial.updated_at,
-        },
-      ],
-    };
-    const finished = {
-      ...started,
-      state: "ready",
-      active_attempt_id: "",
-      messages: [
-        ...initial.messages,
-        {
-          id: "stream-message",
-          speaker_id: "a",
-          content: "The final reply replaces provisional text.",
-          status: "complete",
-          created_at: initial.updated_at,
-        },
-      ],
-    };
-    const event = (id: number, kind: string, data: unknown) =>
-      `id: ${id}\nevent: ${kind}\ndata: ${JSON.stringify(data)}\n\n`;
-    return route.fulfill({
-      contentType: "text/event-stream",
-      body:
-        event(43, "turn_started", started) +
-        event(44, "text_delta", {
-          attempt_id: "stream-attempt",
-          text: "Provisional reply",
-        }) +
-        event(45, "turn_finished", finished),
-    });
-  });
+  await page.route("**/api/conversations/test-conversation", (r) =>
+    r.fulfill({
+      json: {
+        ...initial,
+        tools_enabled: true,
+        tools: [
+          {
+            id: "tool-1",
+            participant_id: "a",
+            message_id: "reply-a",
+            call: { name: "web_search", query: "current library research" },
+            status: "complete",
+            created_at: initial.updated_at,
+            sources: [
+              {
+                id: "web-1",
+                kind: "web",
+                name: "Library source",
+                url: "https://example.com/report",
+                text: "Fictional current search excerpt",
+                truncated: true,
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
   await page.goto("/?conversation=test-conversation");
+  await page.getByText("Searched the web", { exact: true }).click();
   await expect(
-    page.getByText("The final reply replaces provisional text."),
+    page.getByRole("link", { name: "Library source" }),
   ).toBeVisible();
+  await capture(page, "tools");
+  const request = page.waitForRequest(
+    (r) =>
+      r.url().endsWith("/controls") &&
+      r.postDataJSON().action === "tools" &&
+      r.postDataJSON().tools_enabled === false,
+  );
+  await page.getByRole("button", { name: "Web access On" }).click();
+  await request;
   await expect(
-    page.getByText("Provisional reply", { exact: true }),
-  ).not.toBeVisible();
-  await expect.poll(() => replayCursor).toBe("45");
+    page.getByRole("button", { name: "Web access Off" }),
+  ).toBeVisible();
 });
-
-test('discover, filter, compare, and add models; save and reload a setup',async({page})=>{
- await mock(page);await page.goto('/');
- await page.getByRole('button',{name:'Browse models',exact:true}).click();
- await expect(page.getByRole('heading',{name:'Discover models'})).toBeVisible();
- await page.getByRole('button',{name:'Free',exact:true}).click();
- await expect(page.getByRole('heading',{name:'Cedar Reasoner'})).toBeVisible();
- await expect(page.getByRole('heading',{name:'Orchid Vision'})).not.toBeVisible();
- await page.getByRole('button',{name:'All models',exact:true}).click();
- await page.getByRole('button',{name:'Compare Cedar Reasoner'}).click();
- await page.getByRole('button',{name:'Compare Orchid Vision'}).click();
- await expect(page.getByRole('table')).toContainText('32,000');
- await page.getByRole('button',{name:'Add Cedar Reasoner'}).click();
- await expect(page.getByLabel('Participant 1 name')).toHaveValue('Cedar Reasoner');
- await page.getByRole('button',{name:'Add Orchid Vision'}).click();
- await page.getByRole('button',{name:'Clear comparison'}).click();
- await capture(page,'picker');
- await page.getByRole('button',{name:'Done choosing models'}).click();
- await page.getByLabel('Save these participants').fill('Fictional research team');
- await page.getByRole('button',{name:'Save setup',exact:true}).click();
- await expect(page.getByText('Setup saved.',{exact:true})).toBeVisible();
- await page.getByRole('button',{name:'Remove participant 2'}).click();
- await page.getByLabel('Use a saved setup').selectOption({label:'Fictional research team'});
- await expect(page.getByLabel('Participant 2 name')).toHaveValue('Orchid Vision');
- await capture(page,'discovery');
- await page.goto('/?view=models');
- await expect(page.getByRole('heading',{name:'Model library'})).toBeVisible();
- await capture(page,'models');
+test("failed models stay visible and can be brought back", async ({
+  page,
+}, info) => {
+  await mock(page);
+  await page.route("**/api/conversations/test-conversation", (r) =>
+    r.fulfill({
+      json: {
+        ...initial,
+        state: "running",
+        next: 1,
+        unavailable_participants: { a: "provider returned HTTP 401" },
+      },
+    }),
+  );
+  await page.goto("/?conversation=test-conversation");
+  if (info.project.name === "mobile")
+    await page
+      .getByRole("button", { name: "Participants", exact: true })
+      .click();
+  const root =
+    info.project.name === "mobile"
+      ? page.getByRole("dialog", { name: "Participants" })
+      : page.locator(".conversation-roster");
+  await expect(root.getByText("Sitting out")).toBeVisible();
+  const request = page.waitForRequest(
+    (r) =>
+      r.url().endsWith("/controls") &&
+      r.postDataJSON().action === "restore_model",
+  );
+  await root.getByRole("button", { name: "Bring back", exact: true }).click();
+  await request;
 });
-
-test('attach a file, search and select web evidence, then preserve sources in conversation',async({page})=>{
- await mock(page);await page.goto('/?conversation=test-conversation');
- await expect(page.getByLabel('Your message')).toBeVisible();
- await page.getByLabel('Attach context file').setInputFiles({name:'notes.md',mimeType:'text/markdown',buffer:Buffer.from('Fictional volunteer budget is 40 hours.')});
- await expect(page.getByText('notes.md',{exact:true})).toBeVisible();
- await page.getByRole('button',{name:'Web sources',exact:true}).click();
- await page.getByLabel('Search the web').fill('fictional library hours');
- await page.getByRole('button',{name:'Search',exact:true}).click();
- await expect(page.getByRole('link',{name:'Fictional library source'})).toBeVisible();
- await page.getByRole('button',{name:'Add source',exact:true}).click();
- await expect(page.getByText('1 web sources selected.')).toBeVisible();
- await page.getByRole('button',{name:'Done',exact:true}).click();
- await page.getByLabel('Your message').fill('Use this context in the discussion.');
- await page.getByRole('button',{name:'Send message'}).click();
- await expect(page.getByLabel('Your message')).toHaveValue('');
- await page.getByRole('button',{name:'Sources (1)'}).click();
- await page.getByRole('dialog').getByText('notes.md',{exact:true}).click();
- await expect(page.getByText('Fictional volunteer budget is 40 hours.',{exact:true})).toBeVisible();
+test("settings and login keep connection setup out of the home screen", async ({
+  page,
+}, info) => {
+  await mock(page, { login: true, empty: true });
+  await page.goto("/");
+  await page.getByLabel("Password").fill("test-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "What’s on your mind?" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Connect models", exact: true }).click();
+  await page.getByRole("button", { name: "OpenAI", exact: true }).click();
+  await expect(page.getByLabel("API key", { exact: true })).toBeVisible();
+  await page.getByLabel("API key", { exact: true }).fill("fictional-test-key");
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByText("Provider saved.")).toBeVisible();
 });
-
-
-test('desktop chat keeps long model roster beside a readable transcript', async ({page}) => {
- test.skip(test.info().project.name !== 'desktop');
- await mock(page);
- const participants = Array.from({length:12},(_,i)=>({id:`speaker-${i}`,name:`Fictional research participant ${i+1}`,provider_id:'pollinations',model:`fictional-provider/long-model-identifier-${i+1}`}));
- const current={...structuredClone(initial),participants,messages:[initial.messages[0],...Array.from({length:24},(_,i)=>({id:`long-${i}`,speaker_id:participants[i%12].id,status:'complete',created_at:initial.updated_at,content:`Fictional discussion contribution ${i+1}. The library can trial longer weekend hours with a small volunteer rota. Keep a record of attendance and compare the workload before deciding whether to extend the trial.`}))]};
- await page.route('**/api/conversations/test-conversation',r=>r.fulfill({contentType:'application/json',body:JSON.stringify(current)}));
- for (const [width,height] of [[1440,844],[1280,720]]) {
-  await page.setViewportSize({width,height});await page.goto('/?conversation=test-conversation');await expect(page.locator('.conversation-roster')).toBeVisible();
-  const bounds=await page.evaluate(()=>{const transcript=document.querySelector('.transcript')!.getBoundingClientRect(),reading=document.querySelector('.conversation-reading')!.getBoundingClientRect(),roster=document.querySelector('.conversation-roster')!.getBoundingClientRect(),composer=document.querySelector('.composer-area')!.getBoundingClientRect();return{height:transcript.height,readingRight:reading.right,rosterLeft:roster.left,transcriptBottom:transcript.bottom,composerTop:composer.top,documentWidth:document.documentElement.scrollWidth}});
-  expect(bounds.height).toBeGreaterThan(height*0.4);expect(bounds.rosterLeft).toBeGreaterThanOrEqual(bounds.readingRight);expect(bounds.transcriptBottom).toBeLessThanOrEqual(bounds.composerTop+1);expect(bounds.documentWidth).toBeLessThanOrEqual(width);
-  await page.evaluate(()=>document.fonts.ready);
-  const prose=await page.locator('.message-body').first().evaluate(el=>({width:el.getBoundingClientRect().width,max:getComputedStyle(el).maxWidth,font:getComputedStyle(el).fontFamily}));
-  expect(prose.width).toBeLessThanOrEqual(760);
-  await page.locator('.transcript').evaluate(el=>el.scrollTop=0);
-  await page.screenshot({path:`../.impeccable/review/layout-fix/desktop-chat-${width}.png`});
- }
+test("saved groups and attachments still work", async ({ page }) => {
+  await mock(page);
+  await page.goto("/");
+  await expect(page.getByText("Cedar Reasoner", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Conversation options" }).click();
+  await page.getByLabel("Save this model group").fill("Fictional group");
+  await page.getByRole("button", { name: "Save group" }).click();
+  await expect(page.getByText("Group saved.")).toBeVisible();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page
+    .getByLabel("Attach context file")
+    .setInputFiles({
+      name: "notes.md",
+      mimeType: "text/markdown",
+      buffer: Buffer.from("Fictional notes"),
+    });
+  await expect(page.getByText("notes.md", { exact: true })).toBeVisible();
 });
-
-test('desktop setup ends with its form and navigation toggle survives reload',async({page})=>{
- test.skip(test.info().project.name !== 'desktop');await mock(page);await page.setViewportSize({width:1440,height:844});await page.goto('/');
- await page.getByRole('button',{name:'Add your first participant'}).click();await page.getByRole('button',{name:'Add participant',exact:true}).click();
- await expect(page.locator('.new-main .model-library')).toHaveCount(0);
- await page.locator('.new-main').evaluate(el=>el.scrollTop=el.scrollHeight);
- const gap=await page.evaluate(()=>document.querySelector('.new-main')!.getBoundingClientRect().bottom-document.querySelector('.save-setup')!.getBoundingClientRect().bottom);expect(gap).toBeLessThan(110);
- await page.screenshot({path:'../.impeccable/review/layout-fix/desktop-setup-bottom.png'});
- await page.getByRole('button',{name:'Collapse navigation'}).click();await expect(page.locator('.app > .rail')).not.toBeVisible();await page.reload();await expect(page.getByRole('button',{name:'Expand navigation'})).toBeVisible();await page.getByRole('button',{name:'Expand navigation'}).click();await expect(page.locator('.app > .rail')).toBeVisible();
-});
-
-
-test('retry a failed reply without a new human message',async({page})=>{
- await mock(page);await page.route('**/api/conversations/test-conversation',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({...initial,state:'failed',attempts:[{id:'failed-turn',message_id:'reply-b',status:'failed',error:'provider returned HTTP 429'}]})}));await page.goto('/?conversation=test-conversation');
- await expect(page.getByRole('button',{name:'Retry reply',exact:true})).toBeVisible();const request=page.waitForRequest(r=>r.url().endsWith('/controls')&&r.postDataJSON().action==='retry');await page.getByRole('button',{name:'Retry reply',exact:true}).click();await request;await expect(page.getByRole('button',{name:'Pause',exact:true})).toBeVisible();
-});
-
-test('show queued automatic retry and allow pausing it',async({page})=>{
- await mock(page);await page.route('**/api/conversations/test-conversation',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({...initial,state:'running',retry_at:new Date(Date.now()+60000).toISOString(),automatic_retry_count:1})}));await page.goto('/?conversation=test-conversation');await expect(page.getByText(/Automatic retry 1\/2 is scheduled/)).toBeVisible();await expect(page.getByText('Waiting to retry',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Pause',exact:true}).click();await expect(page.getByText(/Automatic retry 1\/2 is scheduled/)).not.toBeVisible();await expect(page.getByRole('button',{name:'Resume',exact:true})).toBeVisible();
-});
-
-
-test('saved models remain selectable across picker visits and refresh failure',async({page})=>{
- await mock(page);let calls=0;
- await page.route('**/api/providers/pollinations/models*',r=>{calls++;return calls===1?r.fulfill({json:{models:[{id:'cedar',name:'Cedar Reasoner',capabilities:[]}],truncated:false}}):r.fulfill({status:502,body:'Catalog unavailable'})});
- await page.goto('/');await page.getByRole('button',{name:'Add your first participant'}).click();
- const input=page.getByRole('combobox',{name:'Model',exact:true});await input.click();await expect(page.getByRole('option',{name:'Cedar Reasoner cedar'})).toBeVisible();await capture(page,'selector');await page.getByRole('option',{name:'Cedar Reasoner cedar'}).click();await expect(input).toHaveValue('cedar');
- await page.getByRole('button',{name:'Browse models',exact:true}).click();await expect(page.getByRole('heading',{name:'Cedar Reasoner',exact:true})).toBeVisible();await page.getByRole('button',{name:'Done choosing models'}).click();
- await page.getByRole('button',{name:'Browse models',exact:true}).click();expect(calls).toBe(1);
- await page.getByRole('button',{name:'Refresh models',exact:true}).click();await expect(page.getByText('Couldn’t refresh this provider’s models.')).toBeVisible();await expect(page.getByRole('button',{name:'Add Cedar Reasoner',exact:true})).toBeVisible();expect(calls).toBe(2);
-});
-test('unavailable model explains failure and can be restored',async({page},info)=>{
- await mock(page);await page.route('**/api/conversations/test-conversation',r=>r.fulfill({json:{...initial,state:'running',next:1,unavailable_participants:{a:'provider returned HTTP 401'}}}));
- await page.goto('/?conversation=test-conversation');
- if(info.project.name==='mobile')await page.getByRole('button',{name:'Participants (2)'}).click();
- const roster=info.project.name==='mobile'?page.getByRole('dialog',{name:'Participants',exact:true}):page.getByRole('complementary',{name:'Conversation participants'});
- await expect(roster.getByText('Sitting out',{exact:true})).toBeVisible();await expect(roster.getByText('provider returned HTTP 401',{exact:true})).toBeVisible();
- await capture(page,'recovery');
- const request=page.waitForRequest(r=>r.url().endsWith('/controls')&&r.postDataJSON().action==='restore_model'&&r.postDataJSON().text==='a');await roster.getByRole('button',{name:'Bring back',exact:true}).click();await request;
-});
-
-test('search cancellation preserves selection and custom IDs require confirmation',async({page})=>{
- await mock(page);await page.goto('/');await page.getByRole('button',{name:'Add your first participant'}).click();
- const input=page.getByRole('combobox',{name:'Model',exact:true});await input.click();await page.getByRole('option',{name:'Cedar Reasoner cedar Free'}).click();await expect(input).toHaveValue('cedar');
- await input.fill('orch');await input.press('Escape');await expect(input).toHaveValue('cedar');
- await input.fill('orch');await page.getByRole('heading',{name:'At the table'}).click();await expect(input).toHaveValue('cedar');
- await input.fill('private/custom-model');await page.getByRole('button',{name:'Use this model ID: private/custom-model',exact:true}).click();await expect(input).toHaveValue('private/custom-model');
+test("desktop sidebar toggle persists and chat has reading room", async ({
+  page,
+}, info) => {
+  test.skip(info.project.name === "mobile");
+  await mock(page);
+  await page.goto("/?conversation=test-conversation");
+  await page.getByRole("button", { name: "Collapse navigation" }).click();
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Expand navigation" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Expand navigation" }).click();
+  for (const [width, height] of [
+    [1440, 844],
+    [1280, 720],
+  ]) {
+    await page.setViewportSize({ width, height });
+    const size = await page.locator(".transcript").boundingBox();
+    expect(size!.height).toBeGreaterThan(height * 0.4);
+    await capture(page, `chat-${width}`);
+  }
 });

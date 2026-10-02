@@ -208,6 +208,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		Topic         string                     `json:"topic"`
 		ContextTokens []string                   `json:"context_tokens,omitempty"`
 		Participants  []conversation.Participant `json:"participants"`
+		ToolsEnabled  *bool                      `json:"tools_enabled"`
 		AskQuestions  *bool                      `json:"ask_questions"`
 		Limits        conversation.Limits        `json:"limits"`
 	}
@@ -222,6 +223,9 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "invalid conversation settings", 400)
 		return
+	}
+	if body.ToolsEnabled != nil {
+		c.ToolsEnabled = *body.ToolsEnabled
 	}
 	c.Context, err = s.resolve(body.ContextTokens, nil)
 	if err != nil {
@@ -243,6 +247,7 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Action        string   `json:"action"`
 		Text          string   `json:"text"`
+		ToolsEnabled  *bool    `json:"tools_enabled"`
 		AskQuestions  *bool    `json:"ask_questions"`
 		ContextTokens []string `json:"context_tokens,omitempty"`
 	}
@@ -259,7 +264,11 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 		if len(body.ContextTokens) > 0 && body.Action != "message" {
 			return nil, conversation.ErrInvalid
 		}
-		if err := c.Command(body.Action, body.Text, body.AskQuestions); err != nil {
+		permission := body.AskQuestions
+		if body.Action == "tools" {
+			permission = body.ToolsEnabled
+		}
+		if err := c.Command(body.Action, body.Text, permission); err != nil {
 			return nil, err
 		}
 		c.Context = context

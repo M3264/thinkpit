@@ -124,7 +124,7 @@ func Fetch(ctx context.Context, value string) (conversation.Evidence, error) {
 		return out, err
 	}
 	req, _ := http.NewRequestWithContext(ctx, "GET", value, nil)
-	req.Header.Set("User-Agent", "ThinkPit/1.0 (human-requested page fetch)")
+	req.Header.Set("User-Agent", "ThinkPit/1.0 (public page reader)")
 	client := PublicClient()
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)

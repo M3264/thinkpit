@@ -45,6 +45,7 @@ Creation defaults: questions enabled, 24 turn attempts, 100,000 token budget uni
 | `pause` | None | Interrupts active work; retains any pending question |
 | `stop` | None | Interrupts work and stops permanently |
 | `skip_question` | None | Records an explicit skip and releases the pending question |
+| `tools` | `tools_enabled` boolean | Enables or revokes read-only tools; cancels active work when changed |
 | `questions` | `ask_questions` boolean | Changes question policy, interrupts active work, releases a pending question when disabled |
 | `summary` | None | Requests a cited summary from the next participant while ready, paused, or stopped; caps still apply |
 
@@ -67,7 +68,7 @@ curl -N -u admin -H 'Last-Event-ID: 42' \
 
 Events have monotonic database IDs, a named `event`, and a JSON `data` payload. IDs are global, so gaps within a conversation are expected. Reconnect replays only that conversation's events after the supplied ID, then follows new events.
 
-`created`, `control`, `turn_started`, `turn_finished`, and `recovered` contain authoritative conversation snapshots. `text_delta` contains `attempt_id` and `text`; match it to the active attempt before updating a UI. Snapshots replace provisional streaming content. Provider control JSON is removed from text deltas and stored as validated message metadata after completion.
+`created`, `control`, `turn_started`, `turn_finished`, `tool_started`, `tool_finished`, and `recovered` contain authoritative conversation snapshots. `text_delta` contains `attempt_id` and `text`; match it to the active attempt before updating a UI. Snapshots replace provisional streaming content. Provider control JSON is removed from text deltas and stored as validated message metadata after completion.
 
 The engine states are `ready`, `running`, `waiting_for_user`, `paused`, `stopped`, and `failed`. Ready with reason `idle` means the discussion has completed a quiet round. Failed turns retain an incomplete reply and a safe error in their attempt record.
 
@@ -85,7 +86,7 @@ HTTP 400 means malformed input, 401 means authentication is required, 403 means 
 
 `POST /api/search` takes JSON `query` and returns search results and partial-engine warnings. `POST /api/sources` takes JSON `url`, fetches a public HTTP(S) page, and extracts readable text. Private network addresses and redirects to them are rejected.
 
-Uploads and fetched pages return `evidence` and a signed `token`, valid for 24 hours. Send those strings in `context_tokens` when creating a conversation or submitting a `message` control. Each item is limited to a 16 KB excerpt; conversations hold at most 20 items and 96 KB of context. Evidence persists with the conversation, appears in snapshots and exports, and is deleted with it. Context is marked as untrusted reference material in model prompts. Search only runs when requested by the human; models do not autonomously browse or run tools.
+Uploads and fetched pages return `evidence` and a signed `token`, valid for 24 hours. Send those strings in `context_tokens` when creating a conversation or submitting a `message` control. Each item is limited to a 16 KB excerpt; conversations hold at most 20 items and 96 KB of context. Evidence persists with the conversation, appears in snapshots and exports, and is deleted with it. Context is marked as untrusted reference material in model prompts. Human-selected sources remain available with Web access disabled. For model-driven lookups, see Read-only model tools below.
 
 Transient connection errors, HTTP 408/429, and 5xx responses before any streamed text get up to two automatic retries (three attempts total), with 2s/4s backoff or a longer provider `Retry-After`. Each retry creates a separate recorded attempt and reserves tokens; existing global turn/token caps still apply. Partial replies and permanent failures (such as 400/401) require manual retry. Retry timestamps and counts persist in snapshots; workers skip future retry jobs, including after restart. Pause, stop, or human interruption cancel a queued retry. `retry` after exhaustion starts a fresh bounded retry sequence while preserving global caps.
 
@@ -114,3 +115,14 @@ A failed refresh returns the last saved catalog with `stale: true` and a warning
 a provider without any saved catalog receives HTTP 502. Responses include
 `fetched_at`. Changing endpoint, provider configuration, or credentials selects a
 new server cache entry. Catalogs contain model metadata only, never credentials.
+
+
+## Read-only model tools
+
+Set `tools_enabled: true` when creating a conversation, or use the `tools` control. The browser defaults new conversations to Web access On; API requests without this field and older conversations keep tools disabled.
+
+Participants can request `web_search` (query), `read_page` (public HTTP(S) URL), or `current_time` (IANA timezone, UTC by default) through a validated optional `tool` field in their control record. Results return to the requesting participant before scheduling another speaker. The engine owns permissions; model text cannot enable tools. Each contribution allows three tool calls, with twelve per conversation. Tool-request generations count toward existing turn and token caps.
+
+Snapshots include `tools_enabled`, `tools`, and `pending_tool_id`. Each tool record identifies its participant and message, request, status, result/error, sources, and retrieval time. Completed records and sources persist and appear in Markdown exports. SSE snapshots show activity without requiring an open browser. Failed lookups return an explicit error to the model so it can continue with that limitation; they never fabricate sources.
+
+Tool calls time out after 25 seconds. Pause, Stop, human interruption, model skipping, deletion, and permission revocation cancel in-progress lookups. Restart recovers leased read-only work; stale workers cannot commit results after an interruption. Page fetches reject private addresses and redirects to them. Search queries go to the deployment's search service and its external engines. Retrieved content is untrusted data, with no authority to change execution or permissions. These tools cannot send messages, modify remote data, or run code.

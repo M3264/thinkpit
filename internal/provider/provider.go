@@ -105,7 +105,7 @@ func parse(text string) (conversation.Result, error) {
 	}
 	body = strings.TrimSpace(strings.TrimSuffix(body, "</thinkpit-control>"))
 	var shape map[string]json.RawMessage
-	if json.Unmarshal([]byte(body), &shape) != nil || len(shape) != 3 || shape["addressed_id"] == nil || shape["question"] == nil || shape["ready_to_pause"] == nil || string(shape["ready_to_pause"]) == "null" || string(shape["addressed_id"]) == "null" {
+	if json.Unmarshal([]byte(body), &shape) != nil || (len(shape) != 3 && (len(shape) != 4 || shape["tool"] == nil)) || shape["addressed_id"] == nil || shape["question"] == nil || shape["ready_to_pause"] == nil || string(shape["ready_to_pause"]) == "null" || string(shape["addressed_id"]) == "null" {
 		return conversation.Result{}, errors.New("invalid conversation control record")
 	}
 	if q := shape["question"]; string(q) != "null" {
@@ -121,7 +121,7 @@ func parse(text string) (conversation.Result, error) {
 		return conversation.Result{}, errors.New("invalid conversation control record")
 	}
 	contribution := strings.TrimSpace(text[:at])
-	if contribution == "" {
+	if contribution == "" && control.Tool == nil {
 		return conversation.Result{}, errors.New("empty model contribution")
 	}
 	return conversation.Result{Text: contribution, Control: control}, nil

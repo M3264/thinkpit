@@ -605,3 +605,75 @@ func TestWorkerContinuesPastUnavailableModel(t *testing.T) {
 		t.Fatal("failed model did not sit out cleanly")
 	}
 }
+
+func TestWorkerSearchToolContinuesSameModelWithSources(t *testing.T) {
+	s := database(t)
+	search := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("q") != "latest fictional library news" {
+			t.Error("wrong query")
+		}
+		fmt.Fprint(w, `{"results":[{"title":"Library report","url":"https://example.com/report","content":"A current fictional source excerpt"}]}`)
+	}))
+	defer search.Close()
+	t.Setenv("THINKPIT_SEARCH_URL", search.URL)
+	var calls atomic.Int32
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		if n == 1 {
+			reply(w, "openai_compat", "I will check current sources.", conversation.Control{Tool: &conversation.ToolCall{Name: "web_search", Query: "latest fictional library news"}})
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		if !bytes.Contains(raw, []byte("current fictional source excerpt")) {
+			t.Error("tool result not sent to same model")
+		}
+		reply(w, "openai_compat", "The report supports a trial: https://example.com/report", conversation.Control{ReadyToPause: true})
+	}))
+	defer fake.Close()
+	saveFake(t, s, fake.URL, "one", "openai_compat")
+	c, _ := conversation.New("Latest fictional library news", []conversation.Participant{{ID: "a", Name: "Reader", ProviderID: "one", Model: "test"}}, false, conversation.Limits{})
+	c.ToolsEnabled = true
+	s.Create(context.Background(), c)
+	command(t, s, c.ID, "start", "")
+	startWorker(t, s)
+	done := await(t, s, c.ID, func(c *conversation.Conversation) bool { return c.State == conversation.Ready })
+	if calls.Load() != 2 || len(done.Tools) != 1 || done.Tools[0].Status != "complete" || len(done.Tools[0].Sources) != 1 || done.PendingTool != "" {
+		t.Fatal("search tool loop did not complete")
+	}
+	if !strings.Contains(done.Markdown(), "Tool: web_search") {
+		t.Fatal("tool provenance missing in export")
+	}
+}
+func TestWorkerToolPauseCancelsAndKeepsInterruptedRecord(t *testing.T) {
+	s := database(t)
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	search := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { close(started); <-r.Context().Done(); close(cancelled) }))
+	defer search.Close()
+	t.Setenv("THINKPIT_SEARCH_URL", search.URL)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reply(w, "openai_compat", "Looking up a source.", conversation.Control{Tool: &conversation.ToolCall{Name: "web_search", Query: "query"}})
+	}))
+	defer fake.Close()
+	saveFake(t, s, fake.URL, "one", "openai_compat")
+	c, _ := conversation.New("Test cancellation", []conversation.Participant{{ID: "a", Name: "Reader", ProviderID: "one", Model: "test"}}, false, conversation.Limits{})
+	c.ToolsEnabled = true
+	s.Create(context.Background(), c)
+	command(t, s, c.ID, "start", "")
+	startWorker(t, s)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tool did not start")
+	}
+	command(t, s, c.ID, "pause", "")
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tool network call did not cancel")
+	}
+	saved, err := s.Get(context.Background(), c.ID)
+	if err != nil || saved.State != conversation.Paused || saved.PendingTool != "" || saved.Tools[0].Status != "interrupted" {
+		t.Fatal("cancelled tool overwritten")
+	}
+}

@@ -22,12 +22,19 @@ func Work(ctx context.Context, s *storage.Store) error {
 		}
 		c, err := s.Claim(ctx, owner)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			return err
 		}
 		if c == nil {
 			continue
 		}
-		runTurn(ctx, s, c.ID, owner)
+		if c.PendingTool != "" {
+			runTool(ctx, s, c, owner)
+		} else {
+			runTurn(ctx, s, c.ID, owner)
+		}
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		err = s.Release(cleanup, c.ID, owner)
 		cancel()

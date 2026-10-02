@@ -96,7 +96,7 @@ export function ModelLibrary({
       ) : (
         <>
           <label className="catalog-provider">
-            Provider
+            Service
             <select
               aria-label="Model library provider"
               value={provider.id}
@@ -176,7 +176,7 @@ export function ModelLibrary({
                     </span>
                     <div>
                       <h3>{m.name}</h3>
-                      <code>{m.id}</code>
+
                     </div>
                     <button
                       type="button"
@@ -310,7 +310,7 @@ export function ModelLibrary({
               : ""}
             Listed by {provider.name || provider.id}. Availability and limits
             can change. Capabilities are provider metadata. ThinkPit sends text
-            context; model tools aren’t enabled.
+            context. With Web access on, models can search the web, read pages, and check the current time.
           </p>
         </>
       )}
