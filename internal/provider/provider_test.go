@@ -133,3 +133,20 @@ func TestToolControlRecordValidation(t *testing.T) {
 		t.Fatal("unknown tool field accepted")
 	}
 }
+
+func TestPlainContributionDoesNotRequireControl(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"A useful idea.\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n\ndata: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	a, e := New(Config{ID: "test", Kind: "openai_compat", BaseURL: srv.URL})
+	if e != nil {
+		t.Fatal(e)
+	}
+	var text strings.Builder
+	r, e := a.Stream(context.Background(), conversation.Request{Plain: true, Participant: conversation.Participant{Model: "test"}, MaxOutputTokens: 100}, func(s string) error { text.WriteString(s); return nil })
+	if e != nil || r.Text != "A useful idea." || text.String() != r.Text || !r.Usage.Known {
+		t.Fatalf("plain contribution failed: %+v %v", r, e)
+	}
+}

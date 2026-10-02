@@ -46,6 +46,7 @@ import { Dialog } from "./components/Dialog";
 import { ContextInput } from "./components/ContextInput";
 import { Providers } from "./components/Connections";
 import { ModelLibrary } from "./components/ModelLibrary";
+import { AtlasStart, AtlasRoom } from "./components/Atlas";
 import { Textarea } from "./components/Textarea";
 const uid = () => crypto.randomUUID().replaceAll("-", "");
 const labels = {
@@ -136,7 +137,7 @@ export default function App() {
     [limits, setLimits] = useState({
       max_turns: 24,
       max_tokens: 150000,
-      max_output_tokens: 1024,
+      max_output_tokens: 2048,
     });
   const params = new URLSearchParams(url),
     selected = params.get("conversation"),
@@ -198,11 +199,21 @@ export default function App() {
           ),
       );
       for (const p of usable) {
-        const models = peekCatalog(p).catalog?.models || [];
+        const models = (peekCatalog(p).catalog?.models || []).filter(
+          (m) => m.free === true && !/embed|image|audio|guard|jev/i.test(m.id),
+        );
+        const checkedFree = ['liquid/lfm-2.5-2.6b:free','cohere/north-mini-code:free','inclusionai/ling-3.0-flash-sante:free'];
+        const rank=(id:string)=>{const i=checkedFree.indexOf(id);return i<0?99:i};
+        models.sort((a,b)=>rank(a.id)-rank(b.id)||a.name.localeCompare(b.name));
+        const distinct = models.filter(
+          (m, i) =>
+            i === 0 || m.id.split("/")[0] !== models[0].id.split("/")[0],
+        );
+        const defaults = distinct.length > 1 ? distinct : models;
         if (models.length) {
           didDefault.current = true;
           setDraft(
-            models.slice(0, 2).map((m) => ({
+            defaults.slice(0, 2).map((m) => ({
               id: uid(),
               name: m.name.slice(0, 128),
               model: m.id,
@@ -338,7 +349,7 @@ export default function App() {
       await refresh();
     }
     setDraft((old) =>
-      old.length >= 64
+      old.length >= 8
         ? old
         : [
             ...old,
@@ -373,7 +384,15 @@ export default function App() {
         throw Error(
           `Connect ${providers.find((p) => p.id === missing.provider_id)?.name} in Settings to use this model.`,
         );
+      const director = providers.find(
+        (p) => p.has_key && new URL(p.base_url).hostname === "openrouter.ai",
+      );
+      if (!director)
+        throw Error(
+          "Connect OpenRouter in Settings to coordinate your atlas with Jev.",
+        );
       const c = await post<Conversation>("/conversations", {
+        director_provider_id: director.id,
         topic,
         participants: draft,
         ask_questions: ask,
@@ -472,7 +491,7 @@ export default function App() {
     );
   if (!auth) return <Login onLogin={() => setAuth(true)} />;
   return (
-    <div className={`app ${collapsed ? "rail-collapsed" : ""}`}>
+    <div className={`app atlas-shell ${collapsed ? "rail-collapsed" : ""}`}>
       <a className="skip-link" href="#main">
         Skip to conversation
       </a>
@@ -545,7 +564,11 @@ export default function App() {
         <main
           id="main"
           className={
-            current ? "chat-main" : view ? "settings-main" : "new-main"
+            view
+              ? "settings-main"
+              : current && !current.brainstorm
+                ? "chat-main"
+                : "atlas-main"
           }
         >
           {loading ? (
@@ -566,143 +589,35 @@ export default function App() {
               </Link>
             </div>
           ) : !current ? (
-            <div className="start-page">
-              <div className="start-intro">
-                <img
-                  src="/brand/thinkpit-mark.svg"
-                  alt=""
-                  width="64"
-                  height="51"
-                />
-                <h1>What’s on your mind?</h1>
-                <p>
-                  Bring a question. Let a few different minds work through it
-                  with you.
-                </p>
-              </div>
-              <div className="start-composer">
-                <Textarea
-                  aria-label="Conversation topic"
-                  name="topic"
-                  placeholder="What would you like to explore?"
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  rows={3}
-                  maxLength={32000}
-                  onKeyDown={(e) => {
-                    if (
-                      e.key === "Enter" &&
-                      !e.shiftKey &&
-                      !e.nativeEvent.isComposing
-                    ) {
-                      e.preventDefault();
-                      void start();
-                    }
-                  }}
-                />
-                <ContextInput
-                  items={context}
-                  onChange={setContext}
-                  onBusy={setContextBusy}
-                />
-                <div className="start-actions">
-                  <button
-                    className={`mode-button ${web ? "enabled" : ""}`}
-                    aria-pressed={web}
-                    onClick={() => setWeb(!web)}
-                  >
-                    <Globe size={16} aria-hidden="true" />
-                    Web access <span>{web ? "On" : "Off"}</span>
-                  </button>
-                  <button
-                    className="button primary"
-                    disabled={busy || contextBusy}
-                    onClick={() => void start()}
-                  >
-                    {busy ? "Starting…" : "Start conversation"}
-                    <ArrowUp size={16} aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-              <div className="model-line">
-                <span className="model-line-label">Discuss with</span>
-                <div className="chosen-models">
-                  {draft.map((p, i) => (
-                    <div className="chosen-model" key={p.id}>
-                      <Avatar name={p.name} index={i} />
-                      <button
-                        className="model-name"
-                        onClick={() => setOptionsOpen(true)}
-                      >
-                        {p.name}
-                      </button>
-                      <button
-                        className="icon-button"
-                        aria-label={`Remove ${p.name}`}
-                        onClick={() =>
-                          setDraft((old) => old.filter((v) => v.id !== p.id))
-                        }
-                      >
-                        <X size={13} aria-hidden="true" />
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    className="add-model"
-                    onClick={() => setModelsOpen(true)}
-                  >
-                    <Plus size={15} aria-hidden="true" />
-                    {draft.length ? "Add model" : "Choose models"}
-                  </button>
-                </div>
-                <button
-                  className="icon-button"
-                  aria-label="Conversation options"
-                  onClick={() => setOptionsOpen(true)}
-                >
-                  <SlidersHorizontal size={17} aria-hidden="true" />
-                </button>
-              </div>
-              {web && (
-                <p className="web-hint">
-                  Models can search the web, read pages, and check the current
-                  time. You’ll see what they find.
-                </p>
+            <AtlasStart
+              topic={topic}
+              setTopic={setTopic}
+              draft={draft}
+              remove={(id) => setDraft((old) => old.filter((p) => p.id !== id))}
+              choose={() => setModelsOpen(true)}
+              options={() => setOptionsOpen(true)}
+              start={() => void start()}
+              busy={busy || contextBusy}
+              web={web}
+              setWeb={setWeb}
+              context={context}
+              setContext={setContext}
+              onContextBusy={setContextBusy}
+              connected={providers.some(
+                (p) =>
+                  p.has_key && new URL(p.base_url).hostname === "openrouter.ai",
               )}
-              <div className="starter-list">
-                {[
-                  [
-                    "Make a decision",
-                    "Compare my options and help me decide: ",
-                  ],
-                  [
-                    "Check an idea",
-                    "Help me test this idea and find its weak spots: ",
-                  ],
-                  [
-                    "Understand something",
-                    "Explain this and explore different perspectives: ",
-                  ],
-                ].map(([label, value]) => (
-                  <button key={label} onClick={() => setTopic(value)}>
-                    {label}
-                    <ArrowUpRight size={16} aria-hidden="true" />
-                  </button>
-                ))}
-              </div>
-              {!providers.length && (
-                <div className="connection-notice">
-                  <p>
-                    Connect a model service to get started. You only need to do
-                    this once.
-                  </p>
-                  <Link className="button secondary" href="/?view=providers">
-                    Connect models
-                    <ArrowUpRight size={15} aria-hidden="true" />
-                  </Link>
-                </div>
-              )}
-            </div>
+            />
+          ) : current.brainstorm ? (
+            <AtlasRoom
+              key={current.id}
+              c={current}
+              busy={busy}
+              control={control}
+              people={() => setPeopleOpen(true)}
+              sources={() => setSourcesOpen(true)}
+              connection={connected ? "connected" : "reconnecting"}
+            />
           ) : (
             <div className="conversation-layout">
               <section className="conversation-reading">

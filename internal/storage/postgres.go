@@ -204,7 +204,7 @@ func (s *Store) Claim(ctx context.Context, owner string) (*conversation.Conversa
 	if err = json.Unmarshal(data, &c); err != nil {
 		return nil, err
 	}
-	if c.ActiveID != "" {
+	if c.ActiveID != "" || (c.Brainstorm != nil && c.Brainstorm.PendingID != "") {
 		c.Recover()
 		if err = event(ctx, tx, c.ID, "recovered", &c); err != nil {
 			return nil, err

@@ -3,9 +3,9 @@ const provider = {
   id: "pollinations",
   name: "Pollinations",
   kind: "openai_compat",
-  base_url: "https://text.pollinations.ai",
+  base_url: "https://openrouter.ai/api/v1",
   endpoint_path: "/openai",
-  has_key: false,
+  has_key: true,
 };
 const initial = {
   id: "test-conversation",
@@ -224,8 +224,10 @@ async function mock(page: Page, { login = false, empty = false } = {}) {
         current.state = "running";
       } else if (["start", "resume", "retry"].includes(body.action))
         current.state = "running";
-      else if (body.action === "pause") current.state = "paused";
-      else if (body.action === "stop") current.state = "stopped";
+      else if (body.action === "pause") {
+        current.state = "paused";
+        current.reason = "user_pause";
+      } else if (body.action === "stop") current.state = "stopped";
       else if (body.action === "tools")
         current.tools_enabled = body.tools_enabled;
       else if (body.action === "questions")
@@ -265,6 +267,30 @@ async function mock(page: Page, { login = false, empty = false } = {}) {
     return route.fulfill({ status: 404 });
   });
   return {
+    atlas() {
+      current.brainstorm = {
+        provider_id: "pollinations",
+        exchange_turns: 3,
+        decisions: [],
+      };
+      current.reason = "brainstorm_complete";
+      current.messages[0].content = initial.topic;
+      current.messages[1] = {
+        ...current.messages[1],
+        kind: "explore",
+        reply_to: "topic",
+        content:
+          "## A two-Saturday experiment\nOpen for two additional hours. Record attendance and give volunteers a clear end date.",
+      };
+      current.messages[2] = {
+        ...current.messages[2],
+        kind: "challenge",
+        reply_to: "reply-a",
+        content:
+          "## Protect the volunteer budget\nAlex’s experiment needs a staffing limit. Keep it within the existing volunteer hours, then compare attendance.",
+      };
+      conversations = [current];
+    },
     question() {
       current = {
         ...current,
@@ -295,7 +321,9 @@ test("home puts topic and models first and hides advanced setup", async ({
   await mock(page);
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "What’s on your mind?" }),
+    page.getByRole("heading", {
+      name: "One question. Uncharted possibilities.",
+    }),
   ).toBeVisible();
   await expect(page.getByLabel("Conversation topic")).toBeVisible();
   await expect(page.getByText("Cedar Reasoner", { exact: true })).toBeVisible();
@@ -306,7 +334,7 @@ test("home puts topic and models first and hides advanced setup", async ({
     .fill("Help me plan a fictional community event.");
   await capture(page, "home");
   await page
-    .getByRole("button", { name: "Start conversation", exact: true })
+    .getByRole("button", { name: "Start exploring", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Pause", exact: true }),
@@ -314,7 +342,7 @@ test("home puts topic and models first and hides advanced setup", async ({
   const body = await page.evaluate(() =>
     JSON.parse(sessionStorage.getItem("thinkpit:participants") || "[]"),
   );
-  expect(body).toHaveLength(2);
+  expect(body).toHaveLength(1);
 });
 test("model picker adds distinct instances and options keep technical fields away", async ({
   page,
@@ -481,9 +509,14 @@ test("settings and login keep connection setup out of the home screen", async ({
   await page.getByLabel("Password").fill("test-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "What’s on your mind?" }),
+    page.getByRole("heading", {
+      name: "One question. Uncharted possibilities.",
+    }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Connect models", exact: true }).click();
+  await page
+    .locator(".atlas-connect")
+    .getByRole("link", { name: "Settings", exact: true })
+    .click();
   await page.getByRole("button", { name: "OpenAI", exact: true }).click();
   await expect(page.getByLabel("API key", { exact: true })).toBeVisible();
   await page.getByLabel("API key", { exact: true }).fill("fictional-test-key");
@@ -499,13 +532,11 @@ test("saved groups and attachments still work", async ({ page }) => {
   await page.getByRole("button", { name: "Save group" }).click();
   await expect(page.getByText("Group saved.")).toBeVisible();
   await page.getByRole("button", { name: "Done", exact: true }).click();
-  await page
-    .getByLabel("Attach context file")
-    .setInputFiles({
-      name: "notes.md",
-      mimeType: "text/markdown",
-      buffer: Buffer.from("Fictional notes"),
-    });
+  await page.getByLabel("Attach context file").setInputFiles({
+    name: "notes.md",
+    mimeType: "text/markdown",
+    buffer: Buffer.from("Fictional notes"),
+  });
   await expect(page.getByText("notes.md", { exact: true })).toBeVisible();
 });
 test("desktop sidebar toggle persists and chat has reading room", async ({
@@ -528,5 +559,101 @@ test("desktop sidebar toggle persists and chat has reading room", async ({
     const size = await page.locator(".transcript").boundingBox();
     expect(size!.height).toBeGreaterThan(height * 0.4);
     await capture(page, `chat-${width}`);
+  }
+});
+
+test("atlas connects real ideas and sends a focused follow-up", async ({
+  page,
+}, info) => {
+  const state = await mock(page);
+  state.atlas();
+  await page.goto("/?conversation=test-conversation");
+  const workspace = page.locator(
+    info.project.name === "mobile"
+      ? ".atlas-small-panels"
+      : ".atlas-desktop-panels",
+  );
+  await workspace
+    .getByRole("button", { name: "Open Idea: A two-Saturday experiment" })
+    .click();
+  await expect(
+    workspace.getByRole("heading", {
+      name: "A two-Saturday experiment",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    workspace.getByText("Where this led", { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Your contribution").fill("fail this message");
+  await page
+    .getByRole("button", { name: "Send contribution", exact: true })
+    .click();
+  await expect(page.getByLabel("Your contribution")).toHaveValue(
+    "fail this message",
+  );
+  await page
+    .getByLabel("Your contribution")
+    .fill("Test this with just one volunteer.");
+  const req = page.waitForRequest(
+    (r) =>
+      r.url().endsWith("/controls") && r.postDataJSON()?.action === "message",
+  );
+  await page
+    .getByRole("button", { name: "Send contribution", exact: true })
+    .click();
+  expect((await req).postDataJSON().reply_to).toBe("reply-a");
+  await expect(page.getByLabel("Your contribution")).toHaveValue("");
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Continue", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: `../.impeccable/review/atlas/${info.project.name}-room.png`,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+test("atlas map and ordered reading stay usable with keyboard and long topics", async ({
+  page,
+}, info) => {
+  const state = await mock(page);
+  state.atlas();
+  await page.goto("/?conversation=test-conversation");
+  await page.getByRole("button", { name: "Read", exact: true }).click();
+  const workspace = page.locator(
+    info.project.name === "mobile"
+      ? ".atlas-small-panels"
+      : ".atlas-desktop-panels",
+  );
+  await workspace.getByRole("button", { name: /Idea · Alex/ }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    workspace.getByRole("heading", {
+      name: "A two-Saturday experiment",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Map", exact: true }).click();
+  await workspace.getByRole("button", { name: "Fit map", exact: true }).click();
+  await page.getByRole("button", { name: "Web off", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Web on", exact: true }),
+  ).toBeVisible();
+  if (info.project.name === "desktop") {
+    for (const width of [1280, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.screenshot({
+        path: `../.impeccable/review/atlas/desktop-${width}.png`,
+      });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+    }
   }
 });

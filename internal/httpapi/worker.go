@@ -32,6 +32,8 @@ func Work(ctx context.Context, s *storage.Store) error {
 		}
 		if c.PendingTool != "" {
 			runTool(ctx, s, c, owner)
+		} else if c.NeedsDecision() {
+			runDecision(ctx, s, c.ID, owner)
 		} else {
 			runTurn(ctx, s, c.ID, owner)
 		}

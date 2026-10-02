@@ -60,6 +60,7 @@ const marker = "\n<thinkpit-control>"
 type filter struct {
 	all, pending string
 	control      bool
+	plain        bool
 	emit         func(string) error
 }
 
@@ -67,6 +68,9 @@ func (f *filter) add(s string) error {
 	f.all += s
 	if len(f.all) > 1024*1024 {
 		return errors.New("provider response too large")
+	}
+	if f.plain {
+		return f.emit(s)
 	}
 	if f.control {
 		return nil
@@ -137,6 +141,9 @@ func (a *Adapter) Stream(ctx context.Context, r conversation.Request, emit func(
 	// Explicitly disable OpenRouter provider fallbacks; never change the chosen participant model silently.
 	if strings.Contains(a.Config.BaseURL, "openrouter.ai") {
 		body["provider"] = map[string]bool{"allow_fallbacks": false}
+		if r.Plain {
+			body["reasoning"] = map[string]any{"effort": "low", "exclude": true}
+		}
 	}
 	if a.Config.EndpointPath != "" {
 		path = a.Config.EndpointPath
@@ -165,7 +172,7 @@ func (a *Adapter) Stream(ctx context.Context, r conversation.Request, emit func(
 	if resp.StatusCode != 200 {
 		return conversation.Result{}, &RetryError{Status: resp.StatusCode, Delay: retryAfter(resp.Header.Get("Retry-After"))}
 	} // Never echo upstream bodies or URLs: they may contain keys.
-	f := filter{emit: emit}
+	f := filter{emit: emit, plain: r.Plain}
 	usage := conversation.Usage{}
 	done := false
 	finished := false
@@ -252,6 +259,13 @@ func (a *Adapter) Stream(ctx context.Context, r conversation.Request, emit func(
 	if !done || !finished {
 		usage.Known = false
 		return conversation.Result{Usage: usage}, errors.New("provider stream ended before completion")
+	}
+	if r.Plain {
+		text := strings.TrimSpace(f.all)
+		if text == "" {
+			return conversation.Result{Usage: usage}, errors.New("empty model contribution")
+		}
+		return conversation.Result{Text: text, Usage: usage}, nil
 	}
 	result, err := parse(f.all)
 	result.Usage = usage

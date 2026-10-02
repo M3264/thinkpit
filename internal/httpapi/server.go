@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/M3264/thinkpit/internal/conversation"
+	"github.com/M3264/thinkpit/internal/director"
 	"github.com/M3264/thinkpit/internal/provider"
 	"github.com/M3264/thinkpit/internal/storage"
 )
@@ -205,12 +206,13 @@ func (s *Server) saveProvider(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Topic         string                     `json:"topic"`
-		ContextTokens []string                   `json:"context_tokens,omitempty"`
-		Participants  []conversation.Participant `json:"participants"`
-		ToolsEnabled  *bool                      `json:"tools_enabled"`
-		AskQuestions  *bool                      `json:"ask_questions"`
-		Limits        conversation.Limits        `json:"limits"`
+		DirectorProviderID string                     `json:"director_provider_id"`
+		Topic              string                     `json:"topic"`
+		ContextTokens      []string                   `json:"context_tokens,omitempty"`
+		Participants       []conversation.Participant `json:"participants"`
+		ToolsEnabled       *bool                      `json:"tools_enabled"`
+		AskQuestions       *bool                      `json:"ask_questions"`
+		Limits             conversation.Limits        `json:"limits"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -223,6 +225,14 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "invalid conversation settings", 400)
 		return
+	}
+	if body.DirectorProviderID != "" {
+		p, e := s.Store.Provider(r.Context(), body.DirectorProviderID)
+		if e != nil || !director.Supports(p) || len(c.Participants) > 8 {
+			http.Error(w, "Idea Atlas needs a connected OpenRouter account and up to eight participants", 400)
+			return
+		}
+		c.EnableBrainstorm(body.DirectorProviderID)
 	}
 	if body.ToolsEnabled != nil {
 		c.ToolsEnabled = *body.ToolsEnabled
@@ -245,6 +255,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 	var body struct {
+		ReplyTo       string   `json:"reply_to"`
 		Action        string   `json:"action"`
 		Text          string   `json:"text"`
 		ToolsEnabled  *bool    `json:"tools_enabled"`
@@ -267,6 +278,13 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 		permission := body.AskQuestions
 		if body.Action == "tools" {
 			permission = body.ToolsEnabled
+		}
+		if body.Action == "message" {
+			if err := c.SetFocus(body.ReplyTo); err != nil {
+				return nil, err
+			}
+		} else if body.ReplyTo != "" {
+			return nil, conversation.ErrInvalid
 		}
 		if err := c.Command(body.Action, body.Text, permission); err != nil {
 			return nil, err

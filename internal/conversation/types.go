@@ -63,6 +63,8 @@ type Control struct {
 	ReadyToPause bool      `json:"ready_to_pause"`
 }
 type Message struct {
+	Kind       string    `json:"kind,omitempty"`
+	DecisionID string    `json:"decision_id,omitempty"`
 	ID         string    `json:"id"`
 	SpeakerID  string    `json:"speaker_id"`
 	Content    string    `json:"content"`
@@ -83,6 +85,7 @@ type Attempt struct {
 	Error          string `json:"error,omitempty"`
 }
 type Conversation struct {
+	Brainstorm         *Brainstorm       `json:"brainstorm,omitempty"`
 	ToolsEnabled       bool              `json:"tools_enabled"`
 	ToolSteps          int               `json:"tool_steps,omitempty"`
 	Tools              []ToolRecord      `json:"tools,omitempty"`
@@ -119,6 +122,7 @@ type Event struct {
 	Data           any    `json:"data"`
 }
 type Request struct {
+	Plain           bool        `json:"plain,omitempty"`
 	Participant     Participant `json:"participant"`
 	System          string      `json:"system"`
 	Transcript      string      `json:"transcript"`

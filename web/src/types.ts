@@ -19,23 +19,54 @@ export type Question = {
   message_id?: string;
 };
 export type Message = {
+  kind?: string;
+  reply_to?: string;
+  decision_id?: string;
   id: string;
   speaker_id: string;
   content: string;
   status: "complete" | "streaming" | "incomplete";
   provider_id?: string;
   model?: string;
-  control?: { question?: Question | null; ready_to_pause: boolean };
+  control?: {
+    tool?: { name: string };
+    question?: Question | null;
+    ready_to_pause: boolean;
+  };
   created_at: string;
 };
-export type ToolRecord = { id:string;participant_id:string;message_id:string;call:{name:string;query?:string;url?:string;timezone?:string};status:string;result?:string;error?:string;sources?:Evidence[];created_at:string };
+export type ToolRecord = {
+  id: string;
+  participant_id: string;
+  message_id: string;
+  call: { name: string; query?: string; url?: string; timezone?: string };
+  status: string;
+  result?: string;
+  error?: string;
+  sources?: Evidence[];
+  created_at: string;
+};
 export type Conversation = {
- tools_enabled?:boolean;
- tools?:ToolRecord[];
- pending_tool_id?:string;
+  brainstorm?: {
+    provider_id: string;
+    action?: string;
+    pending_id?: string;
+    focus_message_id?: string;
+    exchange_turns: number;
+    decisions: {
+      id: string;
+      status: string;
+      action?: string;
+      applied_action?: string;
+      error?: string;
+    }[];
+  };
+  tools_enabled?: boolean;
+  tools?: ToolRecord[];
+  pending_tool_id?: string;
 
   next?: number;
-  unavailable_participants?: Record<string,string>;
+  unavailable_participants?: Record<string, string>;
   retry_at?: string;
   automatic_retry_count?: number;
   context?: Evidence[];
@@ -75,7 +106,13 @@ export type Model = {
   free?: boolean;
   capabilities: string[];
 };
-export type Catalog = { models: Model[]; truncated: boolean; fetched_at?: string; stale?: boolean; warning?: string };
+export type Catalog = {
+  models: Model[];
+  truncated: boolean;
+  fetched_at?: string;
+  stale?: boolean;
+  warning?: string;
+};
 export type Evidence = {
   id: string;
   kind: "file" | "web";
