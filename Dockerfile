@@ -6,6 +6,7 @@ RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca npm ci --no-audit --no-fund; else npm ci --no-audit --no-fund; fi
 COPY web ./
 RUN npm run build
+RUN rm -rf /web/node_modules
 
 FROM golang:1.27-alpine AS build
 WORKDIR /src
